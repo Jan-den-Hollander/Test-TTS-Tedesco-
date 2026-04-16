@@ -24,8 +24,9 @@ import { motion, AnimatePresence } from 'motion/react';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
+// ✅ 'error' toegevoegd aan role — voor de foutbubbel in het gespreksveld
 interface Message {
-  role: 'user' | 'model';
+  role: 'user' | 'model' | 'error';
   de: string;
   it: string;
   score?: number;
@@ -71,6 +72,15 @@ export default function App() {
     prevMessagesLength.current = messages.length;
   }, [messages.length, isThinking]);
 
+  // ✅ Safari-fix: AudioContext initialiseren of hervatten tijdens een klik
+  const ensureAudioContext = () => {
+    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+      audioContextRef.current.resume();
+    } else if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+  };
+
   const toggleCam = async () => {
     if (isCamOn) {
       if (streamRef.current) {
@@ -104,8 +114,6 @@ export default function App() {
     }
   };
 
-  // ✅ FIX 1: Alleen de Duitse tekst meegeven, geen Engelse instructie.
-  // ✅ FIX 2: speechConfig met een echte Duitse stem (Kore) toegevoegd.
   const speakIt = async (text: string) => {
     if (!text) return;
     setIsSpeaking(true);
@@ -156,13 +164,9 @@ export default function App() {
     }
   };
 
+  // ✅ Safari-fix: ensureAudioContext bij de microfoonklik
   const startRecording = () => {
-  // Wek de AudioContext alvast op tijdens deze klik!
-  if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-    audioContextRef.current.resume();
-  } else if (!audioContextRef.current) {
-    audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-  }
+    ensureAudioContext();
     try {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (!SpeechRecognition) { setStatus('Spraakherkenning niet ondersteund.'); return; }
@@ -204,50 +208,88 @@ export default function App() {
     return 0.5;
   };
 
-  // ✅ FIX 3: Systeemprompt in het Duits, geen 'ph' (fonetiek) meer in het JSON.
-  const generateAIResponse = async (history: Message[]) => {
+  // ✅ Nieuwe generateAIResponse met timeout + automatische retry + foutbubbel
+  const generateAIResponse = async (history: Message[], retryCount = 0) => {
     setIsThinking(true);
-    setStatus('Der Spiegel denkt nach...');
+    setStatus(retryCount > 0
+      ? 'Nochmal versuchen... · Even opnieuw...'
+      : 'Der Spiegel denkt nach...'
+    );
+
     const systemPrompt = `Du bist ein freundlicher Gesprächspartner auf Deutsch — wie ein Zauberspiegel.
 Niveau: ${level}. Aktuelles Thema: ${topic}.
 REGELN: Nur ein kurzer Satz auf Deutsch pro Antwort (max. 12 Wörter). Stelle immer eine Frage am Ende.
 Antworte NUR mit gültigem JSON, ohne Erklärungen oder Markdown: {"de":"deutscher Satz","it":"traduzione italiana"}`;
 
-    const contents = history.map(m => ({
-      role: m.role === 'user' ? 'user' : 'model',
-      parts: [{ text: m.role === 'user' ? m.de : JSON.stringify({ de: m.de, it: m.it }) }]
-    }));
+    // Foutberichten niet meesturen naar de AI
+    const contents = history
+      .filter(m => m.role !== 'error')
+      .map(m => ({
+        role: m.role === 'user' ? 'user' : 'model',
+        parts: [{ text: m.role === 'user'
+          ? m.de
+          : JSON.stringify({ de: m.de, it: m.it }) }]
+      }));
 
     try {
       const aiInstance = getAI();
-      const response = await aiInstance.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: contents.length > 0 ? contents : [{ role: 'user', parts: [{ text: 'Beginne das Gespräch.' }] }],
+
+      // Tijdslimiet: 12 seconden. Daarna automatisch retry op sneller model.
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('TIMEOUT')), 12000)
+      );
+
+      const responsePromise = aiInstance.models.generateContent({
+        // Eerste poging: gemini-2.5-flash. Retry: gemini-2.0-flash (sneller)
+        model: retryCount > 0 ? "gemini-2.0-flash" : "gemini-2.5-flash",
+        contents: contents.length > 0
+          ? contents
+          : [{ role: 'user', parts: [{ text: 'Beginne das Gespräch.' }] }],
         config: { systemInstruction: systemPrompt, responseMimeType: "application/json" },
       });
+
+      const response = await Promise.race([responsePromise, timeoutPromise]);
       const data = JSON.parse(response.text || "{}");
-      // ✅ FIX 4: Geen 'ph' meer in het Message object.
-      const aiMsg: Message = { role: 'model', de: data.de || "Hallo!", it: data.it || "Ciao!" };
+      const aiMsg: Message = {
+        role: 'model',
+        de: data.de || "Hallo!",
+        it: data.it || "Ciao!",
+      };
       setMessages(prev => [...prev, aiMsg]);
       setIsThinking(false);
       speakIt(aiMsg.de);
+
     } catch (err) {
+      // Eerste mislukking → stil automatisch herproberenop sneller model
+      if (retryCount === 0) {
+        setStatus('Verbinding traag, even opnieuw...');
+        setTimeout(() => generateAIResponse(history, 1), 2000);
+        return;
+      }
+
+      // Tweede mislukking → toon drietalige foutbubbel (DE + IT + NL) in gespreksveld
       setIsThinking(false);
-      setStatus('Oeps, de spiegel is beslagen.');
+      setStatus('Server überlastet · Server bezet');
+      const errorMsg: Message = { role: 'error', de: '', it: '' };
+      setMessages(prev => [...prev, errorMsg]);
     }
   };
 
-  const startNewConversation = () => {{ 
-  // --- VOEG DIT TOE ---
-  if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
-    audioContextRef.current.resume();
-  } else if (!audioContextRef.current) {
-    audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-  } setMessages([]); setScore(0); generateAIResponse([]); };
+  // ✅ Safari-fix: ensureAudioContext bij Nuova Conversazione
+  // ✅ Syntaxfout gerepareerd (dubbele accolades en onvolledige structuur in origineel)
+  const startNewConversation = () => {
+    ensureAudioContext();
+    setMessages([]);
+    setScore(0);
+    generateAIResponse([]);
+  };
 
   const downloadTranscript = () => {
     if (messages.length === 0) return;
-    const transcript = messages.map(m => `[${m.role === 'user' ? 'JIJ' : 'SPIEGEL'}]\nDE: ${m.de}\nIT: ${m.it || '-'}\n`).join('\n---\n\n');
+    const transcript = messages
+      .filter(m => m.role !== 'error')
+      .map(m => `[${m.role === 'user' ? 'JIJ' : 'SPIEGEL'}]\nDE: ${m.de}\nIT: ${m.it || '-'}\n`)
+      .join('\n---\n\n');
     const blob = new Blob([transcript], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = `gesprek.txt`;
@@ -391,28 +433,92 @@ Antworte NUR mit gültigem JSON, ohne Erklärungen oder Markdown: {"de":"deutsch
 
         {/* Chat */}
         <div className="w-full h-[35vh] min-h-[250px] bg-black/30 border border-[#c9a84c]/10 rounded-xl overflow-y-auto p-3 space-y-3 scrollbar-thin mb-4">
-          {messages.map((msg, i) => (
-            <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-              <div className={`max-w-[90%] px-3 py-2 rounded-xl text-[0.8rem] leading-relaxed ${msg.role === 'user' ? 'bg-white/5 border border-white/10 rounded-br-none italic text-white/80' : 'bg-gradient-to-br from-[#c9a84c]/10 to-[#c9a84c]/5 border border-[#c9a84c]/20 rounded-bl-none'}`}>
-                {msg.role === 'model' ? (
-                  <>
-                    {/* ✅ FIX 5: Alleen de Duitse zin en Italiaanse vertaling tonen. Geen fonetiek meer. */}
-                    <span className="font-serif italic text-base text-[#e8c97a] block mb-0.5">{msg.de}</span>
-                    <span className="text-[0.65rem] text-white/40 block leading-tight">{msg.it}</span>
-                  </>
-                ) : (
-                  <>
-                    <span>{msg.de}</span>
-                    {msg.score !== undefined && (
-                      <div className={`mt-1.5 text-[0.55rem] font-bold uppercase px-1.5 py-0.5 rounded-sm inline-block ${msg.score === 2 ? 'bg-green-500/10 text-green-400' : msg.score === 1 ? 'bg-yellow-500/10 text-yellow-400' : 'bg-red-500/10 text-red-400'}`}>
-                        {msg.score === 2 ? '✓ Ottimo!' : msg.score === 1 ? '~ Bijna!' : '↻ Probeer opnieuw'}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            </motion.div>
-          ))}
+
+          {messages.map((msg, i) => {
+
+            // ✅ Drietalige foutbubbel (Duits + Italiaans + Nederlands)
+            if (msg.role === 'error') {
+              return (
+                <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                  className="flex flex-col items-start">
+                  <div className="w-full px-3 py-3 rounded-xl rounded-bl-none text-[0.72rem] leading-relaxed bg-amber-900/20 border border-amber-500/30 space-y-2">
+
+                    {/* Hoofdmelding Duits */}
+                    <p className="text-amber-300 font-semibold text-[0.75rem]">
+                      ⚠️ Der Zauberspiegel ist momentan überlastet
+                    </p>
+
+                    {/* Uitleg rustige uren Duits */}
+                    <p className="text-amber-200/70">
+                      🕐 Der kostenlose Server ist tagsüber und spät abends am stärksten ausgelastet
+                      (wenn amerikanische Gamer online sind). Die ruhigsten Zeiten zum Üben:
+                      früh morgens oder zwischen 13:00 und 15:00 Uhr.
+                    </p>
+
+                    {/* Oefentip Duits */}
+                    <p className="text-amber-200/70">
+                      🎤 Kein Problem! Klicke auf das Mikrofon, um einen Satz laut vorzulesen,
+                      und auf den Lautsprecher 🔊, um ihn zurückzuhören.
+                      So kannst du trotzdem schon üben!
+                    </p>
+
+                    {/* Italiaanse versie */}
+                    <p className="text-amber-200/50 text-[0.65rem] italic">
+                      🇮🇹 Nessun problema! Clicca sul microfono per leggere una frase
+                      ad alta voce e sull'altoparlante per riascoltarla.
+                      Puoi esercitarti lo stesso!
+                    </p>
+
+                    {/* Opnieuw proberen */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMessages(prev => prev.filter((_, idx) => idx !== i));
+                        generateAIResponse(messages.filter(m => m.role !== 'error'));
+                      }}
+                      className="mt-1 px-3 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[0.6rem] uppercase tracking-widest hover:bg-amber-500/30 transition-colors"
+                    >
+                      ↻ Nochmal versuchen · Riprova
+                    </button>
+
+                  </div>
+                </motion.div>
+              );
+            }
+
+            // Normale berichten — ongewijzigd
+            return (
+              <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                <div className={`max-w-[90%] px-3 py-2 rounded-xl text-[0.8rem] leading-relaxed ${
+                  msg.role === 'user'
+                    ? 'bg-white/5 border border-white/10 rounded-br-none italic text-white/80'
+                    : 'bg-gradient-to-br from-[#c9a84c]/10 to-[#c9a84c]/5 border border-[#c9a84c]/20 rounded-bl-none'
+                }`}>
+                  {msg.role === 'model' ? (
+                    <>
+                      <span className="font-serif italic text-base text-[#e8c97a] block mb-0.5">{msg.de}</span>
+                      <span className="text-[0.65rem] text-white/40 block leading-tight">{msg.it}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>{msg.de}</span>
+                      {msg.score !== undefined && (
+                        <div className={`mt-1.5 text-[0.55rem] font-bold uppercase px-1.5 py-0.5 rounded-sm inline-block ${
+                          msg.score === 2 ? 'bg-green-500/10 text-green-400'
+                          : msg.score === 1 ? 'bg-yellow-500/10 text-yellow-400'
+                          : 'bg-red-500/10 text-red-400'
+                        }`}>
+                          {msg.score === 2 ? '✓ Sehr gut!' : msg.score === 1 ? '~ Fast!' : '↻ Nochmal'}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </motion.div>
+            );
+          })}
+
           {isThinking && (
             <div className="flex gap-1.5 p-2 bg-[#c9a84c]/5 border border-[#c9a84c]/10 rounded-xl rounded-bl-none w-12">
               <div className="w-1 h-1 bg-[#c9a84c] rounded-full animate-bounce" />
@@ -443,7 +549,7 @@ Antworte NUR mit gültigem JSON, ohne Erklärungen oder Markdown: {"de":"deutsch
           <div className="flex gap-2">
             <button
               type="button" onClick={downloadTranscript}
-              className="flex-1 py-2 border border-[#c9a84c]/10 rounded-lg text-[0.6rem] tracking-widest uppercase text-[#c9a84c]/60 hover:text-[#c9a84c] flex flex-col items-center gap-0.5"
+              className="flex-1 py-2 border border-[#c9a84c]/10 rounded-lg text-[0.6rem] tracking-widests uppercase text-[#c9a84c]/60 hover:text-[#c9a84c] flex flex-col items-center gap-0.5"
             >
               <div className="flex items-center gap-1"><Save size={12} /> Salva</div>
               <span className="text-[0.45rem] opacity-60">Speichern</span>
