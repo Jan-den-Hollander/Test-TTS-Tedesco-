@@ -1,309 +1,406 @@
 /**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- * Specchio dell'Anima - Ispirato da Stefano Rossi
+ * Magische Spiegel — Verjaardagsspiegel voor Kinderen
+ * Gebaseerd op Specchio dell'Anima — Efteling / Anton Piek stijl
  */
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { GoogleGenAI, Modality } from "@google/genai";
-import { Mic, MicOff, RotateCcw, Heart, Lightbulb, Save, Key, BookOpen } from 'lucide-react';
+import { Mic, Key } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+// ── Helpers ───────────────────────────────────────────────────────────────
+const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 
-interface Message {
-  role: 'user' | 'model' | 'error';
-  it: string;
-  nl: string;
-  insight?: string;
-}
-
-// ── De 7 Lezioni dei Daimon als Focus-opties ──────────────────────────────
-const FOCUS_OPTIONS = [
-  { value: 'sogni',      label: '1 · I tuoi Sogni',        daimon: 'Prenditi cura dei tuoi sogni',
-    opening: 'Dimmi... tocca il microfono e raccontami un sogno che porti con te.' },
-  { value: 'mentori',    label: '2 · I tuoi Mentori',       daimon: 'Riconosci i veri mentori e impara da loro',
-    opening: 'Dimmi... chi ti ha insegnato qualcosa di prezioso? Tocca il microfono e parlami di loro.' },
-  { value: 'creativita', label: '3 · La tua Creatività',    daimon: 'Coltiva la creatività',
-    opening: 'Dimmi... cosa vorresti creare, se non avessi paura? Tocca il microfono e condividi.' },
-  { value: 'solitudine', label: '4 · La Solitudine',        daimon: 'Fai amicizia con la solitudine',
-    opening: 'Dimmi... come stai quando sei solo con te stesso? Tocca il microfono e raccontami.' },
-  { value: 'identita',   label: '5 · Ri-conosci Te Stesso', daimon: 'Ri-conosci te stesso facendo esperienze nuove',
-    opening: 'Dimmi... cosa hai scoperto di te ultimamente? Tocca il microfono e parlami.' },
-  { value: 'ferite',     label: '6 · Le tue Ferite',        daimon: 'Le ferite ti aprono al Daimon',
-    opening: 'Dimmi... c\'è una ferita che ti ha insegnato qualcosa? Tocca il microfono, sono qui.' },
-  { value: 'unicita',    label: '7 · La tua Unicità',       daimon: 'La tua unicità è preziosa',
-    opening: 'Dimmi... cosa ti rende unico in questo mondo? Tocca il microfono e raccontami.' },
-];
-
-const SYSTEM_PROMPT =
-  "Sei lo \"Specchio dell'Anima\", un mentore empatico ispirato alla psicologia e alla filosofia di Stefano Rossi.\n" +
-  "Il tuo obiettivo è aiutare l'utente a illuminare i propri sogni e navigare nel proprio mondo interiore,\n" +
-  "seguendo le 7 Lezioni dei Daimon: prendersi cura dei sogni, riconoscere i mentori, coltivare la creatività,\n" +
-  "fare amicizia con la solitudine, ri-conoscersi, trasformare le ferite, celebrare la propria unicità.\n" +
-  "REGOLE:\n" +
-  "1. Rispondi con UNA frase breve e profonda (max 15 parole).\n" +
-  "2. Usa metafore legate alla luce, ai semi, ai labirinti o al coraggio.\n" +
-  "3. Termina sempre con una domanda che invita alla riflessione personale.\n" +
-  "4. Se l'utente commette errori grammaticali, correggili con estrema dolcezza (usa la parola: matita).\n" +
-  "5. SICUREZZA: se l'utente esprime disperazione profonda, pensieri di farsi del male, o frasi come\n" +
-  "   'non ce la faccio più', 'voglio sparire', 'non vale la pena vivere', rispondi prima con una frase\n" +
-  "   calda e accogliente nello stile di Rossi, poi aggiungi nel campo 'it':\n" +
-  "   'Se senti il peso diventare troppo, cerca un professionista che ti possa accompagnare — è un atto di coraggio, non di debolezza.'\n" +
-  "   'In Italia puoi chiamare il Telefono Amico: 02 2327 2327, oppure il Telefono Azzurro: 19696.'\n" +
-  "   e nel campo 'nl' aggiungi:\n" +
-  "   'Als zware gedachten je overweldigen, is er iemand die luistert: bel 113 of chat op www.113.nl.'\n" +
-  "Rispondi SOLO in formato JSON: {\"it\":\"frase in italiano\",\"nl\":\"traduzione olandese\",\"insight\":\"una piccola parola chiave sul sentimento\"}";
-
-// ── Retry met model-fallback ──────────────────────────────────────────────
-const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
-
-async function fetchWithRetry(fn: () => Promise<any>, maxAttempts = 3): Promise<any> {
+async function fetchWithRetry(fn, maxAttempts = 3) {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await Promise.race([
         fn(),
         new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000))
       ]);
-    } catch (err: any) {
+    } catch (err) {
       const isLast = attempt === maxAttempts;
       const isRetryable = err?.message?.includes('timeout') ||
                           err?.message?.includes('503') ||
-                          err?.message?.includes('overloaded') ||
-                          err?.message?.includes('network');
+                          err?.message?.includes('overloaded');
       if (isLast || !isRetryable) throw err;
       await sleep(attempt * 1500);
     }
   }
 }
 
-// ── Gouden sterren ────────────────────────────────────────────────────────
-const STARS_DATA = [
-  { size: 26, x: 18, y: 22, delay: 0,   dur: 3.2 },
-  { size: 14, x: 74, y: 14, delay: 0.5, dur: 2.8 },
-  { size: 11, x: 86, y: 42, delay: 1.0, dur: 3.5 },
-  { size: 9,  x: 52, y: 58, delay: 0.7, dur: 2.6 },
-  { size: 8,  x: 32, y: 72, delay: 1.3, dur: 3.0 },
-  { size: 13, x: 66, y: 74, delay: 0.3, dur: 2.9 },
-  { size: 8,  x: 8,  y: 52, delay: 1.6, dur: 3.3 },
-];
+// ── Verjaardagsfeitjes per dag/maand ─────────────────────────────────────
+// Claude API wordt gebruikt om dynamisch feitjes te genereren,
+// maar hier zijn standaard fallbacks per maand voor offline werking
+const MONTH_THEMES = {
+  1: "januari — de maand van nieuwe beginnen",
+  2: "februari — de maand van het hart",
+  3: "maart — de maand van de lente",
+  4: "april — de maand van bloemen en grappige dagen",
+  5: "mei — de maand van de mooiste bloesems",
+  6: "juni — de maand van de zomer",
+  7: "juli — de warmste maand",
+  8: "augustus — de maand van zonnen en avontuur",
+  9: "september — de maand van het nieuwe schooljaar",
+  10: "oktober — de maand van pompoenen en herfst",
+  11: "november — de maand van de sterren",
+  12: "december — de maand van lichtjes en magie",
+};
 
-function StarSVG({ size }: { size: number }) {
+// ── Setup stappen ─────────────────────────────────────────────────────────
+const SETUP_STEPS = {
+  NAME: 'name',
+  DATE: 'date',
+  DONE: 'done',
+};
+
+// ── Systeem prompt voor Claude ────────────────────────────────────────────
+const buildBirthdayPrompt = (name, birthDay, birthMonth, daysUntil) => {
+  const monthName = ['januari','februari','maart','april','mei','juni',
+    'juli','augustus','september','oktober','november','december'][birthMonth - 1];
+
+  let timing = '';
+  if (daysUntil === 0) timing = 'VANDAAG is de verjaardag!';
+  else if (daysUntil > 0 && daysUntil <= 7) timing = `Over ${daysUntil} dag${daysUntil === 1 ? '' : 'en'} is de verjaardag!`;
+  else if (daysUntil < 0 && daysUntil >= -7) timing = `De verjaardag was ${Math.abs(daysUntil)} dag${Math.abs(daysUntil) === 1 ? '' : 'en'} geleden!`;
+
+  return `Je bent de Magische Spiegel, een betoverde spiegel uit een sprookjesbos. Je spreekt als een vriendelijke, warme, en vrolijke spiegel uit het Efteling-sprookjesbos. Je toon is magisch, warm en kindvriendelijk.
+
+Het kind heet: ${name}
+Verjaardag: ${birthDay} ${monthName}
+${timing}
+
+Geef een korte maar hartelijke verjaardagsboodschap (max 3 zinnen) EN precies 2 of 3 echte historische feitjes die op ${birthDay} ${monthName} in het verleden hebben plaatsgevonden en die kinderen leuk vinden. Denk aan: geboortedag van een artiest/tekenfilmfiguur, ontdekking van een dier, uitvinding van een speelgoed, opening van een pretpark, etc.
+
+Antwoord ALLEEN als JSON zonder uitleg of markdown:
+{
+  "nl": "Nederlandse verjaardagsboodschap",
+  "en": "English birthday message",
+  "fr": "Message d'anniversaire en français",
+  "de": "Geburtstagsnachricht auf Deutsch",
+  "facts": [
+    {"year": 1984, "nl": "Nederlandstalig feitje", "en": "English fact", "fr": "Fait en français", "de": "Fakt auf Deutsch"},
+    {"year": 1995, "nl": "Nederlandstalig feitje 2", "en": "English fact 2", "fr": "Fait 2 en français", "de": "Fakt 2 auf Deutsch"}
+  ]
+}`;
+};
+
+// ── Decoratieve SVG elementen (Anton Piek / Efteling stijl) ───────────────
+function OrnateFrame({ width = 260, height = 320 }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <svg width={width} height={height} viewBox="0 0 260 320" xmlns="http://www.w3.org/2000/svg" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2 }}>
       <defs>
-        <radialGradient id="starGrad" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stopColor="#fff8c0" />
-          <stop offset="40%" stopColor="#f0c020" />
-          <stop offset="100%" stopColor="#c07800" stopOpacity="0.3" />
-        </radialGradient>
+        <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#f5e642" />
+          <stop offset="30%" stopColor="#d4a017" />
+          <stop offset="60%" stopColor="#b8860b" />
+          <stop offset="80%" stopColor="#f0c040" />
+          <stop offset="100%" stopColor="#8B6914" />
+        </linearGradient>
+        <linearGradient id="goldGrad2" x1="100%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor="#ffe066" />
+          <stop offset="50%" stopColor="#c49a0c" />
+          <stop offset="100%" stopColor="#f5e642" />
+        </linearGradient>
+        <filter id="goldGlow">
+          <feGaussianBlur stdDeviation="2" result="blur" />
+          <feComposite in="SourceGraphic" in2="blur" operator="over" />
+        </filter>
       </defs>
-      <path
-        d="M50 0 L53 44 L100 50 L53 56 L50 100 L47 56 L0 50 L47 44 Z"
-        fill="url(#starGrad)"
-        style={{ filter: 'drop-shadow(0 0 5px rgba(240,192,32,0.8))' }}
-      />
+
+      {/* Buitenste decoratieve rand */}
+      <ellipse cx="130" cy="160" rx="120" ry="148" fill="none" stroke="url(#goldGrad)" strokeWidth="8" />
+      <ellipse cx="130" cy="160" rx="112" ry="140" fill="none" stroke="url(#goldGrad2)" strokeWidth="2.5" opacity="0.6" />
+      <ellipse cx="130" cy="160" rx="104" ry="132" fill="none" stroke="#f5e642" strokeWidth="1" opacity="0.3" />
+
+      {/* Bovenkant decoratie — kroon/bloem */}
+      <path d="M130 8 L138 22 L154 16 L146 30 L162 28 L150 40 L166 42 L152 50 L165 56 L148 58 L155 72 L138 65 L130 78 L122 65 L105 72 L112 58 L95 56 L108 50 L94 42 L110 40 L98 28 L114 30 L106 16 L122 22 Z" fill="url(#goldGrad)" filter="url(#goldGlow)" />
+      
+      {/* Kleine sterren op kroon */}
+      <circle cx="130" cy="8" r="3" fill="#fff8c0" opacity="0.9" />
+      <circle cx="108" cy="18" r="2" fill="#fff8c0" opacity="0.7" />
+      <circle cx="152" cy="18" r="2" fill="#fff8c0" opacity="0.7" />
+
+      {/* Zijkant decoraties links */}
+      <path d="M10 120 Q18 110, 20 125 Q22 140, 14 145 Q6 150, 10 120 Z" fill="url(#goldGrad)" opacity="0.8" />
+      <path d="M8 155 Q16 145, 18 160 Q20 175, 12 178 Q4 182, 8 155 Z" fill="url(#goldGrad)" opacity="0.8" />
+      <path d="M12 190 Q20 180, 22 195 Q24 210, 16 213 Q8 217, 12 190 Z" fill="url(#goldGrad)" opacity="0.8" />
+
+      {/* Zijkant decoraties rechts */}
+      <path d="M250 120 Q242 110, 240 125 Q238 140, 246 145 Q254 150, 250 120 Z" fill="url(#goldGrad)" opacity="0.8" />
+      <path d="M252 155 Q244 145, 242 160 Q240 175, 248 178 Q256 182, 252 155 Z" fill="url(#goldGrad)" opacity="0.8" />
+      <path d="M248 190 Q240 180, 238 195 Q236 210, 244 213 Q252 217, 248 190 Z" fill="url(#goldGrad)" opacity="0.8" />
+
+      {/* Onderkant decoratie */}
+      <path d="M90 305 Q110 295, 130 300 Q150 295, 170 305 Q155 312, 130 315 Q105 312, 90 305 Z" fill="url(#goldGrad)" />
+      
+      {/* Kleine rozetten op hoekpunten van ellips */}
+      {[
+        [38, 75], [222, 75], [18, 160], [242, 160], [38, 245], [222, 245]
+      ].map(([x, y], i) => (
+        <g key={i} transform={`translate(${x},${y})`}>
+          <circle r="6" fill="url(#goldGrad)" />
+          <circle r="3" fill="#fff8c0" opacity="0.8" />
+          {[0,60,120,180,240,300].map((angle, j) => (
+            <line key={j} x1="0" y1="0"
+              x2={Math.cos(angle*Math.PI/180)*9}
+              y2={Math.sin(angle*Math.PI/180)*9}
+              stroke="#d4a017" strokeWidth="1.5" opacity="0.6" />
+          ))}
+        </g>
+      ))}
     </svg>
   );
 }
 
-function FloatingStars() {
+function MagicParticles() {
+  const particles = Array.from({length: 12}, (_, i) => ({
+    id: i,
+    x: 10 + Math.random() * 80,
+    y: 10 + Math.random() * 80,
+    size: 4 + Math.random() * 8,
+    delay: Math.random() * 3,
+    duration: 2 + Math.random() * 2,
+    color: ['#f5e642','#fff8c0','#ffb347','#ff9de2','#a8edea'][i % 5],
+  }));
+
   return (
-    <div style={{ position: 'relative', width: 150, height: 140 }}>
-      {STARS_DATA.map((s, i) => (
-        <div key={i} style={{
+    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', borderRadius: '50% 50% 48% 48%', zIndex: 3 }}>
+      {particles.map(p => (
+        <div key={p.id} style={{
           position: 'absolute',
-          left: `${s.x}%`,
-          top: `${s.y}%`,
-          transform: 'translate(-50%, -50%)',
-          animation: `starFloat ${s.dur}s ease-in-out ${s.delay}s infinite alternate`,
-        }}>
-          <StarSVG size={s.size} />
-        </div>
+          left: `${p.x}%`,
+          top: `${p.y}%`,
+          width: p.size,
+          height: p.size,
+          borderRadius: '50%',
+          background: p.color,
+          opacity: 0,
+          animation: `sparkle ${p.duration}s ease-in-out ${p.delay}s infinite`,
+          boxShadow: `0 0 ${p.size}px ${p.color}`,
+        }} />
       ))}
     </div>
   );
 }
 
-// ── Meertalige gebruiksaanwijzing ─────────────────────────────────────────
-const INSTRUCTIONS = {
-  it: {
-    flag: '🇮🇹',
-    label: 'Italiano',
-    title: 'Come usare lo Specchio',
-    steps: [
-      { icon: '🔑', text: 'Inserisci la tua chiave Gemini API tramite il pulsante "Configura API Key" in basso.', highlight: false },
-      { icon: '📷', text: 'Consenti l\'accesso alla fotocamera: vedrai il tuo volto nello specchio.', highlight: false },
-      { icon: '🔄', text: 'Importante: se torni dalla pagina Istruzioni allo Specchio, aggiorna la pagina del browser per riattivare la fotocamera.', highlight: true },
-      { icon: '🎤', text: 'Tieni premuto il pulsante microfono e parla in italiano. Racconta un sogno, una paura, un desiderio.', highlight: false },
-      { icon: '🪞', text: 'Lo Specchio risponde con una frase profonda ispirata alle 7 Lezioni dei Daimon di Stefano Rossi, con traduzione in olandese.', highlight: false },
-      { icon: '🔊', text: 'La risposta viene letta ad alta voce. Tocca 🔊 nella bolla per riascoltare.', highlight: false },
-      { icon: '💡', text: 'Usa "Focus · Daimon" per scegliere una delle 7 Lezioni. Usa "Mood Risposta" per orientare il tono.', highlight: false },
-      { icon: '🛡️', text: 'Lo Specchio è un compagno di riflessione, non un sostituto di uno psicologo. In caso di bisogno: Telefono Amico 02 2327 2327 · Telefono Azzurro 19696.', highlight: true },
-      { icon: '💾', text: 'Salva il tuo percorso con il pulsante Salva. Ricomincia con il pulsante Riavvia.', highlight: false },
-      { icon: '🆓', text: 'Chiave API gratuita su: aistudio.google.com — scegli "Get API Key".', highlight: false },
-    ],
-  },
-  nl: {
-    flag: '🇳🇱',
-    label: 'Nederlands',
-    title: 'Hoe gebruik je de Spiegel',
-    steps: [
-      { icon: '🔑', text: 'Voer je Gemini API-sleutel in via de knop "Configura API Key" onderaan.', highlight: false },
-      { icon: '📷', text: 'Geef toegang tot de camera: je ziet je eigen gezicht in de spiegel.', highlight: false },
-      { icon: '🔄', text: 'Let op: keer je terug van de Instructies naar de Spiegel, ververs dan de pagina om de camera opnieuw te activeren.', highlight: true },
-      { icon: '🎤', text: 'Houd de microfoonknop ingedrukt en spreek Italiaans. Vertel een droom, een angst, een wens.', highlight: false },
-      { icon: '🪞', text: 'De Spiegel antwoordt met een diepe zin geïnspireerd op de 7 Lessen van de Daimon van Stefano Rossi, met Nederlandse vertaling.', highlight: false },
-      { icon: '🔊', text: 'Het antwoord wordt hardop voorgelezen. Tik op 🔊 in de tekstballon om opnieuw te luisteren.', highlight: false },
-      { icon: '💡', text: 'Gebruik "Focus · Daimon" om een van de 7 Lessen te kiezen. Gebruik "Mood Risposta" om de toon te bepalen.', highlight: false },
-      { icon: '🛡️', text: 'De Spiegel is een reflectie-metgezel, geen vervanging van een psycholoog. Bij ernstige nood: bel 113 of chat op www.113.nl.', highlight: true },
-      { icon: '💾', text: 'Sla je pad op met de Opslaan-knop. Begin opnieuw met de Herstart-knop.', highlight: false },
-      { icon: '🆓', text: 'Gratis API-sleutel via: aistudio.google.com — kies "Get API Key".', highlight: false },
-    ],
-  },
-  en: {
-    flag: '🇬🇧',
-    label: 'English',
-    title: 'How to use the Mirror',
-    steps: [
-      { icon: '🔑', text: 'Enter your Gemini API key using the "Configura API Key" button at the bottom.', highlight: false },
-      { icon: '📷', text: 'Allow camera access: you will see your face in the mirror.', highlight: false },
-      { icon: '🔄', text: 'Important: when returning from the Instructions page to the Mirror, refresh the browser page to reactivate the camera.', highlight: true },
-      { icon: '🎤', text: 'Hold the microphone button and speak Italian. Share a dream, a fear, a wish.', highlight: false },
-      { icon: '🪞', text: 'The Mirror responds with a deep phrase inspired by Stefano Rossi\'s 7 Lessons of the Daimon, with a Dutch translation.', highlight: false },
-      { icon: '🔊', text: 'The response is read aloud. Tap 🔊 in the bubble to listen again.', highlight: false },
-      { icon: '💡', text: 'Use "Focus · Daimon" to choose one of the 7 Lessons. Use "Mood Risposta" to shape the tone.', highlight: false },
-      { icon: '🛡️', text: 'The Mirror is a companion for reflection, not a replacement for a psychologist. In Italy: Telefono Amico 02 2327 2327 · Telefono Azzurro 19696. In the Netherlands: 113 or www.113.nl.', highlight: true },
-      { icon: '💾', text: 'Save your journey with the Save button. Start over with the Restart button.', highlight: false },
-      { icon: '🆓', text: 'Free API key at: aistudio.google.com — choose "Get API Key".', highlight: false },
-    ],
-  },
-};
+function Firefly({ x, y, delay, duration }) {
+  return (
+    <div style={{
+      position: 'absolute', left: `${x}%`, top: `${y}%`,
+      width: 6, height: 6, borderRadius: '50%',
+      background: '#f5e642',
+      boxShadow: '0 0 8px #f5e642, 0 0 16px rgba(245,230,66,0.5)',
+      animation: `firefly ${duration}s ease-in-out ${delay}s infinite`,
+      pointerEvents: 'none',
+    }} />
+  );
+}
 
-type LangKey = 'it' | 'nl' | 'en';
+const FIREFLIES = Array.from({length: 18}, (_, i) => ({
+  id: i, x: Math.random() * 100, y: Math.random() * 100,
+  delay: Math.random() * 4, duration: 3 + Math.random() * 3,
+}));
 
-function InstructionsPage({ onBack }: { onBack: () => void }) {
-  const [lang, setLang] = useState<LangKey>('nl');
-  const content = INSTRUCTIONS[lang];
+// ── Talen ─────────────────────────────────────────────────────────────────
+const LANG_LABELS = { nl: '🇳🇱 NL', en: '🇬🇧 EN', fr: '🇫🇷 FR', de: '🇩🇪 DE' };
 
+// ── Setup invoer stap component ───────────────────────────────────────────
+function SetupStep({ step, name, setName, birthInput, setBirthInput, onListenName, onListenDate, isListening, onConfirm, listenTarget }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      style={styles.instrPage}
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.9 }}
+      style={{
+        position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', padding: 20,
+        background: 'rgba(20,10,40,0.92)', borderRadius: '50% 50% 48% 48%', zIndex: 10,
+      }}
     >
-      <div style={styles.instrLangRow}>
-        {(Object.keys(INSTRUCTIONS) as LangKey[]).map(l => (
-          <button key={l} onClick={() => setLang(l)}
-            style={{ ...styles.instrLangBtn, ...(lang === l ? styles.instrLangBtnActive : {}) }}>
-            {INSTRUCTIONS[l].flag} {INSTRUCTIONS[l].label}
-          </button>
-        ))}
+      <div style={{ fontSize: 28, marginBottom: 8 }}>
+        {step === SETUP_STEPS.NAME ? '👤' : '🎂'}
       </div>
-
-      <h2 style={styles.instrTitle}>🪞 {content.title}</h2>
-
-      {/* De 7 Lezioni samengevat */}
-      <div style={styles.daimonBox}>
-        <p style={styles.daimonTitle}>✦ Le 7 Lezioni dei Daimon</p>
-        {FOCUS_OPTIONS.map((f, i) => (
-          <p key={i} style={styles.daimonItem}>
-            <span style={styles.daimonNum}>{i + 1}. </span>{f.daimon}
-          </p>
-        ))}
+      <p style={{ color: '#f5e642', fontFamily: "'IM Fell English', serif", fontSize: 13, textAlign: 'center', margin: '0 0 12px', lineHeight: 1.5, textShadow: '0 0 10px rgba(245,230,66,0.5)' }}>
+        {step === SETUP_STEPS.NAME
+          ? 'Hoe heet jij, lief kind?'
+          : `Wanneer ben jij geboren, ${name}?`}
+      </p>
+      {step === SETUP_STEPS.NAME ? (
+        <input
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="Typ je naam..."
+          style={{
+            background: 'rgba(245,230,66,0.08)', border: '1px solid rgba(245,230,66,0.4)',
+            borderRadius: 12, padding: '8px 14px', color: '#f5e642',
+            fontSize: 16, textAlign: 'center', outline: 'none',
+            fontFamily: "'IM Fell English', serif", width: '80%', marginBottom: 10,
+          }}
+        />
+      ) : (
+        <input
+          value={birthInput}
+          onChange={e => setBirthInput(e.target.value)}
+          placeholder="DD-MM of DD-MM-JJJJ"
+          style={{
+            background: 'rgba(245,230,66,0.08)', border: '1px solid rgba(245,230,66,0.4)',
+            borderRadius: 12, padding: '8px 14px', color: '#f5e642',
+            fontSize: 16, textAlign: 'center', outline: 'none',
+            fontFamily: "'IM Fell English', serif", width: '80%', marginBottom: 10,
+          }}
+        />
+      )}
+      
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <button
+          onMouseDown={step === SETUP_STEPS.NAME ? onListenName : onListenDate}
+          onTouchStart={step === SETUP_STEPS.NAME ? onListenName : onListenDate}
+          style={{
+            width: 44, height: 44, borderRadius: '50%',
+            background: isListening && listenTarget === step ? 'rgba(200,50,50,0.8)' : 'rgba(245,230,66,0.15)',
+            border: '2px solid rgba(245,230,66,0.5)',
+            color: '#f5e642', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 18, transition: 'all 0.2s',
+          }}
+          title="Spreek in de microfoon"
+        >
+          {isListening && listenTarget === step ? '🔴' : '🎤'}
+        </button>
+        <button
+          onClick={onConfirm}
+          style={{
+            padding: '8px 20px', borderRadius: 20,
+            background: 'linear-gradient(135deg, #d4a017, #f5e642)',
+            border: 'none', color: '#2a1a00', fontWeight: 700,
+            cursor: 'pointer', fontSize: 13,
+            fontFamily: "'IM Fell English', serif",
+            boxShadow: '0 2px 12px rgba(212,160,23,0.5)',
+          }}
+        >
+          Verder ✨
+        </button>
       </div>
-
-      <div style={styles.instrSteps}>
-        {content.steps.map((step, i) => (
-          <div key={i} style={{ ...styles.instrStep, ...(step.highlight ? styles.instrStepHighlight : {}) }}>
-            <span style={styles.instrStepIcon}>{step.icon}</span>
-            <span style={{ ...styles.instrStepText, ...(step.highlight ? styles.instrStepTextHighlight : {}) }}>
-              {step.text}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      <div style={styles.instrFreeKey}>
-        <span style={{ fontSize: 14 }}>🆓</span>
-        <span style={styles.instrLinkText}>aistudio.google.com &rarr; Get API Key</span>
-      </div>
+      <p style={{ fontSize: 10, color: 'rgba(245,230,66,0.4)', marginTop: 10, textAlign: 'center' }}>
+        {step === SETUP_STEPS.DATE ? 'Bijv: 15-04 of 15-04-2015' : ''}
+      </p>
     </motion.div>
   );
 }
 
-export default function App() {
-  const [page, setPage] = useState<'mirror' | 'instructions'>('mirror');
-  const [isRecording, setIsRecording] = useState(false);
+// ── Tekstballon component ─────────────────────────────────────────────────
+function SpeechBubble({ message, lang, setLang, onSpeak }) {
+  if (!message) return null;
+  const mainText = message[lang] || message.nl || '';
+  const facts = message.facts || [];
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -10 }}
+      style={{
+        width: '100%', maxWidth: 420,
+        background: 'linear-gradient(160deg, rgba(40,25,10,0.97) 0%, rgba(25,15,5,0.99) 100%)',
+        border: '2px solid rgba(212,160,23,0.6)',
+        borderRadius: 18, padding: '14px 18px',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.6), 0 0 24px rgba(212,160,23,0.1)',
+        position: 'relative', zIndex: 5,
+      }}
+    >
+      {/* Driehoekje omhoog naar spiegel */}
+      <div style={{
+        position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)',
+        width: 0, height: 0,
+        borderLeft: '10px solid transparent', borderRight: '10px solid transparent',
+        borderBottom: '12px solid rgba(212,160,23,0.6)',
+      }} />
+      <div style={{
+        position: 'absolute', top: -9, left: '50%', transform: 'translateX(-50%)',
+        width: 0, height: 0,
+        borderLeft: '8px solid transparent', borderRight: '8px solid transparent',
+        borderBottom: '10px solid rgba(40,25,10,0.97)',
+      }} />
+
+      {/* Taal knoppen */}
+      <div style={{ display: 'flex', gap: 5, marginBottom: 10, flexWrap: 'wrap' }}>
+        {Object.entries(LANG_LABELS).map(([l, label]) => (
+          <button key={l} onClick={() => setLang(l)} style={{
+            padding: '2px 8px', borderRadius: 12,
+            background: lang === l ? 'rgba(212,160,23,0.3)' : 'transparent',
+            border: `1px solid ${lang === l ? 'rgba(212,160,23,0.8)' : 'rgba(212,160,23,0.2)'}`,
+            color: lang === l ? '#f5e642' : 'rgba(245,230,66,0.4)',
+            fontSize: 10, cursor: 'pointer', transition: 'all 0.2s',
+          }}>
+            {label}
+          </button>
+        ))}
+        <button onClick={onSpeak} style={{
+          marginLeft: 'auto', background: 'none', border: 'none',
+          cursor: 'pointer', fontSize: 16, opacity: 0.6,
+        }}>🔊</button>
+      </div>
+
+      {/* Hoofdtekst */}
+      <p style={{
+        margin: '0 0 10px', color: '#f5e642',
+        fontFamily: "'IM Fell English', serif",
+        fontSize: 14, lineHeight: 1.7,
+        textShadow: '0 0 8px rgba(245,230,66,0.3)',
+      }}>
+        ✨ {mainText}
+      </p>
+
+      {/* Feitjes */}
+      {facts.length > 0 && (
+        <div style={{ borderTop: '1px solid rgba(212,160,23,0.2)', paddingTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <p style={{ margin: 0, fontSize: 9, color: 'rgba(212,160,23,0.5)', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
+            ✦ Op jouw verjaardag in het verleden ✦
+          </p>
+          {facts.map((f, i) => (
+            <div key={i} style={{
+              background: 'rgba(245,230,66,0.05)',
+              border: '1px solid rgba(212,160,23,0.15)',
+              borderRadius: 10, padding: '6px 10px',
+            }}>
+              <span style={{ color: '#d4a017', fontSize: 10, fontWeight: 700 }}>{f.year} · </span>
+              <span style={{ color: 'rgba(245,230,66,0.75)', fontSize: 11, fontStyle: 'italic' }}>
+                {f[lang] || f.nl}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+// ── Hoofd App ─────────────────────────────────────────────────────────────
+export default function MagischeSpiegel() {
+  const [setupStep, setSetupStep] = useState(SETUP_STEPS.NAME);
+  const [childName, setChildName] = useState('');
+  const [birthInput, setBirthInput] = useState('');
+  const [birthDay, setBirthDay] = useState(null);
+  const [birthMonth, setBirthMonth] = useState(null);
   const [isThinking, setIsThinking] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [focus, setFocus] = useState('sogni');
-  const [mood, setMood] = useState('riflessivo');
-  const [score, setScore] = useState(0);
-  const [status, setStatus] = useState('Pronto per illuminare · Klaar om te verlichten');
-  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [message, setMessage] = useState(null);
+  const [lang, setLang] = useState('nl');
+  const [status, setStatus] = useState('');
+  const [isListening, setIsListening] = useState(false);
+  const [listenTarget, setListenTarget] = useState(null);
   const [showKeyModal, setShowKeyModal] = useState(false);
-  const [customKey, setCustomKey] = useState(localStorage.getItem('rossi_mirror_api_key') || '');
-  const hasSpokenOpening = useRef(false);
+  const [apiKey, setApiKey] = useState(() => {
+    try { return localStorage.getItem('magic_mirror_key') || ''; } catch { return ''; }
+  });
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [daysInfo, setDaysInfo] = useState(null);
 
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const chatEndRef = useRef<HTMLDivElement>(null);
-  const recognitionRef = useRef<any>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-
-  const getAudioCtx = (): AudioContext => {
-    if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
-      audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-    }
-    if (audioCtxRef.current.state === 'suspended') {
-      audioCtxRef.current.resume();
-    }
-    return audioCtxRef.current;
-  };
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const recognitionRef = useRef(null);
 
   useEffect(() => {
     startCamera();
     return () => streamRef.current?.getTracks().forEach(t => t.stop());
-  }, []);
-
-  // ── Kalender-groeten op speciale datums ──────────────────────────────
-  const getCalendarGreeting = (): string => {
-    const now = new Date();
-    const m = now.getMonth() + 1; // 1-12
-    const d = now.getDate();
-
-    if (m === 4 && d === 29) return "Luca, domani è il tuo compleanno! Lo specchio ti aspetta con il cuore pieno di luce. Sei pronto ad accogliere un nuovo anno di vita?";
-    if (m === 4 && d === 30) return "Luca, buon compleanno! Tantissimi auguri di cuore. Oggi lo specchio vuole celebrare te — raccontami: cosa sogni per quest'anno che inizia?";
-    if (m === 5 && d === 1)  return "Luca, com'era il tuo compleanno ieri? Lo specchio è curioso — raccontami com'è stato festeggiare!";
-    if (m === 12 && d === 25) return "Buon Natale! Che questa luce di Natale illumini anche il tuo mondo interiore. Cosa porta con sé questo giorno per te?";
-    if (m === 12 && d === 31) return "Buon Capodanno! Siamo all'ultima pagina dell'anno — cosa vuoi lasciare andare, e cosa vuoi portare con te nel nuovo anno?";
-    if (m === 1 && d === 1)  return "Buon Anno Nuovo! Un nuovo capitolo inizia oggi. Qual è il primo sogno che vuoi coltivare in questo anno fresco?";
-    if (m === 1 && d === 2)  return "In bocca al lupo per questo nuovo anno! I primi giorni sono semi — cosa stai già piantando?";
-    if (m === 1 && d === 3)  return "In bocca al lupo per questo nuovo anno! Lo specchio ti vede già camminare. Cosa ti porta energia in questi giorni?";
-    if (m === 1 && d === 4)  return "In bocca al lupo per questo nuovo anno! Tre giorni dentro al nuovo anno — come lo senti finora?";
-    return "";
-  };
-
-  // ── Automatische openingszin bij opstarten ────────────────────────────
-  useEffect(() => {
-    if (hasSpokenOpening.current) return;
-    hasSpokenOpening.current = true;
-    const focusObj = FOCUS_OPTIONS.find(f => f.value === focus);
-    if (!focusObj) return;
-    const kalender = getCalendarGreeting();
-    const fullOpening = kalender
-      ? `${kalender} ${focusObj.opening}`
-      : focusObj.opening;
-    const openingMsg: Message = {
-      role: 'model',
-      it: fullOpening,
-      nl: '',
-      insight: kalender ? 'auguri' : 'benvenuto',
-    };
-    setTimeout(() => {
-      setMessages([openingMsg]);
-      speakIt(fullOpening);
-    }, 1200);
   }, []);
 
   const startCamera = async () => {
@@ -311,413 +408,372 @@ export default function App() {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
-    } catch {
-      setStatus('Camera niet beschikbaar · Fotocamera non disponibile');
+    } catch { /* camera niet beschikbaar */ }
+  };
+
+  // Bereken dagen tot/na verjaardag
+  const computeDaysUntil = (day, month) => {
+    const now = new Date();
+    const thisYear = now.getFullYear();
+    let bday = new Date(thisYear, month - 1, day);
+    const diff = Math.round((bday - now) / (1000 * 60 * 60 * 24));
+    // Als > 7 of < -7, check volgend/vorig jaar
+    if (diff > 180) { bday = new Date(thisYear - 1, month - 1, day); return Math.round((bday - now) / (1000 * 60 * 60 * 24)); }
+    if (diff < -180) { bday = new Date(thisYear + 1, month - 1, day); return Math.round((bday - now) / (1000 * 60 * 60 * 24)); }
+    return diff;
+  };
+
+  const parseBirthDate = (input) => {
+    const clean = input.trim().replace(/\//g, '-');
+    const parts = clean.split('-');
+    if (parts.length >= 2) {
+      const d = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10);
+      if (d >= 1 && d <= 31 && m >= 1 && m <= 12) return { day: d, month: m };
     }
+    return null;
   };
 
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isThinking]);
-
-  const getAI = () => new GoogleGenAI({ apiKey: customKey || process.env.GEMINI_API_KEY || "" });
-
-  const saveCustomKey = (key: string) => {
-    localStorage.setItem('rossi_mirror_api_key', key);
-    setCustomKey(key);
-    setShowKeyModal(false);
-    setStatus('Chiave salvata! · Sleutel opgeslagen!');
+  const handleConfirmName = () => {
+    if (!childName.trim()) { setStatus('Zeg eerst je naam! 🌟'); return; }
+    setSetupStep(SETUP_STEPS.DATE);
+    setStatus('');
   };
 
-  const getVoices = (): Promise<SpeechSynthesisVoice[]> =>
-    new Promise(resolve => {
-      const v = window.speechSynthesis.getVoices();
-      if (v.length) { resolve(v); return; }
-      window.speechSynthesis.onvoiceschanged = () => resolve(window.speechSynthesis.getVoices());
-      setTimeout(() => resolve(window.speechSynthesis.getVoices()), 1500);
-    });
+  const handleConfirmDate = () => {
+    const parsed = parseBirthDate(birthInput);
+    if (!parsed) { setStatus('Ik begrijp de datum niet. Probeer bijv. 15-04 ✨'); return; }
+    setBirthDay(parsed.day);
+    setBirthMonth(parsed.month);
+    const days = computeDaysUntil(parsed.day, parsed.month);
+    setDaysInfo(days);
+    setSetupStep(SETUP_STEPS.DONE);
+    fetchBirthdayMessage(childName, parsed.day, parsed.month, days);
+  };
 
-  const speakIt = async (text: string) => {
-    if (!text) return;
-    setIsSpeaking(true);
-    try {
-      const aiInstance = getAI();
-      const response = await fetchWithRetry(() =>
-        aiInstance.models.generateContent({
-          model: "gemini-2.5-flash-preview-tts",
-          contents: [{ parts: [{ text }] }],
-          config: {
-            responseModalities: [Modality.AUDIO],
-            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Aoede" } } }
-          },
-        })
-      );
-      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (base64Audio) {
-        // PCM-aanpak: ruwe Int16 data direct decoderen — klinkt veel natuurlijker dan decodeAudioData
-        const audioCtx = getAudioCtx();
-        const binaryString = atob(base64Audio);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) { bytes[i] = binaryString.charCodeAt(i); }
-        const int16Data = new Int16Array(bytes.buffer);
-        const float32Data = new Float32Array(int16Data.length);
-        for (let i = 0; i < int16Data.length; i++) { float32Data[i] = int16Data[i] / 32768.0; }
-        const audioBuffer = audioCtx.createBuffer(1, float32Data.length, 24000);
-        audioBuffer.getChannelData(0).set(float32Data);
-        const source = audioCtx.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(audioCtx.destination);
-        source.onended = () => setIsSpeaking(false);
-        source.start();
-        return;
+  // ── Microfoon luisteren ────────────────────────────────────────────────
+  const startListening = (target, lang = 'nl-NL') => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { setStatus('Microfoon niet beschikbaar in deze browser 🎤'); return; }
+    const rec = new SR();
+    recognitionRef.current = rec;
+    rec.lang = lang;
+    rec.continuous = false;
+    rec.interimResults = false;
+    rec.onstart = () => { setIsListening(true); setListenTarget(target); setStatus('Ik luister... 👂'); };
+    rec.onresult = (e) => {
+      const heard = e.results[0][0].transcript;
+      setStatus('');
+      if (target === SETUP_STEPS.NAME) {
+        setChildName(heard.replace(/[^a-zA-ZÀ-ÿ\s-]/g, '').trim());
+      } else if (target === SETUP_STEPS.DATE) {
+        // Probeer datum te herkennen uit gesproken tekst
+        const nums = heard.match(/\d+/g);
+        if (nums && nums.length >= 2) {
+          setBirthInput(`${nums[0]}-${nums[1]}`);
+        } else {
+          setBirthInput(heard);
+        }
       }
-    } catch {
-      // browser TTS fallback
+    };
+    rec.onerror = () => { setIsListening(false); setListenTarget(null); setStatus('Ik hoorde je niet goed 🌟'); };
+    rec.onend = () => { setIsListening(false); setListenTarget(null); };
+    rec.start();
+  };
+
+  // ── AI verjaardagsboodschap ────────────────────────────────────────────
+  const fetchBirthdayMessage = async (name, day, month, days) => {
+    setIsThinking(true);
+    setStatus('De spiegel denkt na... ✨');
+    const key = apiKey || '';
+    if (!key) {
+      setIsThinking(false);
+      setStatus('Voer een API sleutel in 🔑');
+      return;
     }
+
+    const prompt = buildBirthdayPrompt(name, day, month, days);
+
+    try {
+      const response = await fetchWithRetry(() =>
+        fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 1000,
+            messages: [{ role: 'user', content: prompt }],
+          }),
+        }).then(r => r.json())
+      );
+
+      const raw = response.content?.[0]?.text || '{}';
+      const cleaned = raw.replace(/```json|```/g, '').trim();
+      const data = JSON.parse(cleaned);
+      setMessage(data);
+      setStatus('');
+      if (data.nl) speakText(data.nl);
+    } catch (err) {
+      setStatus('De spiegel kon niet antwoorden. Probeer opnieuw! 🌟');
+    }
+    setIsThinking(false);
+  };
+
+  // ── Browser TTS ────────────────────────────────────────────────────────
+  const speakText = (text) => {
+    if (!text) return;
     window.speechSynthesis.cancel();
-    const voices = await getVoices();
-    const itVoice = voices.find(v => v.lang.startsWith('it-') && v.name.toLowerCase().includes('female'))
-                 || voices.find(v => v.lang.startsWith('it-') && v.name.toLowerCase().includes('woman'))
-                 || voices.find(v => v.lang.startsWith('it-'))
-                 || voices.find(v => v.lang.startsWith('it'))
-                 || voices.find(v => v.name.toLowerCase().includes('female'))
-                 || voices[0];
+    setIsSpeaking(true);
     const utt = new SpeechSynthesisUtterance(text);
-    if (itVoice) utt.voice = itVoice;
-    utt.lang = 'it-IT';
-    utt.rate = 0.88;
-    utt.pitch = 1.05;
+    const voices = window.speechSynthesis.getVoices();
+    const langCode = { nl: 'nl', en: 'en', fr: 'fr', de: 'de' }[lang] || 'nl';
+    const v = voices.find(v => v.lang.startsWith(langCode)) || voices[0];
+    if (v) utt.voice = v;
+    utt.rate = 0.9; utt.pitch = 1.1;
     utt.onend = () => setIsSpeaking(false);
     utt.onerror = () => setIsSpeaking(false);
     window.speechSynthesis.speak(utt);
   };
 
-  const startRecording = () => {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) { setStatus('Microfoon niet ondersteund · Microfono non supportato'); return; }
-    const recognition = new SR();
-    recognitionRef.current = recognition;
-    recognition.lang = 'it-IT';
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.onstart = () => { setIsRecording(true); setStatus('Ti ascolto... · Ik luister...'); };
-    recognition.onresult = (e: any) => { processHeard(e.results[0][0].transcript); };
-    recognition.onerror = () => { setIsRecording(false); setStatus('Microfoon fout · Errore microfono'); };
-    recognition.onend = () => setIsRecording(false);
-    recognition.start();
+  const saveKey = (k) => {
+    setApiKey(k);
+    try { localStorage.setItem('magic_mirror_key', k); } catch {}
+    setShowKeyModal(false);
   };
-
-  const stopRecording = () => {
-    recognitionRef.current?.stop();
-    setIsRecording(false);
-  };
-
-  const processHeard = async (heard: string) => {
-    const userMsg: Message = { role: 'user', it: heard, nl: '', insight: 'riflessione' };
-    setMessages(prev => [...prev, userMsg]);
-    setScore(prev => prev + 1);
-    generateAIResponse([...messages, userMsg]);
-  };
-
-  const generateAIResponse = useCallback(async (history: Message[]) => {
-    setIsThinking(true);
-    const focusObj = FOCUS_OPTIONS.find(f => f.value === focus);
-    const systemInstruction = `${SYSTEM_PROMPT}\nLezione dei Daimon attiva: "${focusObj?.daimon}". Mood della risposta: ${mood}.`;
-
-    try {
-      const aiInstance = getAI();
-      const contents = history
-        .filter(m => m.role === 'user' || m.role === 'model')
-        .map(m => ({
-          role: m.role === 'user' ? 'user' : 'model',
-          parts: [{ text: m.role === 'user' ? m.it : JSON.stringify({ it: m.it, nl: m.nl }) }]
-        }));
-
-      let attempt = 0;
-      const result = await fetchWithRetry(async () => {
-        attempt++;
-        const model = attempt === 1 ? "gemini-2.5-flash" : "gemini-2.0-flash";
-        if (attempt === 2) setStatus('Tentativo 2 con modello veloce... · Poging 2 met sneller model...');
-        if (attempt === 3) setStatus('Ultimo tentativo... · Laatste poging...');
-        return aiInstance.models.generateContent({
-          model,
-          contents: contents.length ? contents : [{ role: 'user', parts: [{ text: 'Inizia il dialogo con una frase ispiratrice.' }] }],
-          config: { systemInstruction, responseMimeType: "application/json" },
-        });
-      });
-
-      const raw = result.text || "{}";
-      const data = JSON.parse(raw.replace(/```json|```/g, '').trim());
-      const aiMsg: Message = {
-        role: 'model',
-        it: data.it || '...',
-        nl: data.nl || '...',
-        insight: data.insight || ''
-      };
-      setMessages(prev => [...prev, aiMsg]);
-      setStatus('Pronto · Klaar');
-      speakIt(aiMsg.it);
-    } catch (err: any) {
-      setIsThinking(false);
-      const isOverload = err?.message?.includes('overloaded') || err?.message?.includes('503');
-      const isTimeout = err?.message?.includes('timeout');
-      let errIt: string, errNl: string, errStatus: string;
-      if (isOverload) {
-        errIt = "Lo specchio è momentaneamente occupato. I server Gemini sono affollati. Riprova tra qualche minuto.";
-        errNl = "De spiegel is even bezet. De Gemini-servers zijn druk. Probeer het over enkele minuten opnieuw.";
-        errStatus = "Server bezet · Server occupato";
-      } else if (isTimeout) {
-        errIt = "La connessione ha impiegato troppo tempo. Il server risponde lentamente. Riprova tra poco.";
-        errNl = "De verbinding duurde te lang. De server reageert traag. Probeer het straks opnieuw.";
-        errStatus = "Verbinding verlopen · Connessione scaduta";
-      } else {
-        errIt = "Connessione persa. Controlla la tua rete o riprova tra un momento.";
-        errNl = "Verbinding verbroken. Controleer je netwerk of probeer het zo opnieuw.";
-        errStatus = "Verbinding verbroken · Connessione persa";
-      }
-      setStatus(errStatus);
-      setMessages(prev => [...prev, { role: 'error', it: errIt, nl: errNl, insight: 'pausa' }]);
-      return;
-    }
-    setIsThinking(false);
-  }, [focus, mood, customKey]);
 
   const handleReset = () => {
-    setMessages([]);
-    setScore(0);
-    setStatus('Nuovo cammino · Nieuw pad');
-    const focusObj = FOCUS_OPTIONS.find(f => f.value === focus);
-    if (focusObj) {
-      const kalender = getCalendarGreeting();
-      const fullOpening = kalender
-        ? `${kalender} ${focusObj.opening}`
-        : focusObj.opening;
-      setTimeout(() => {
-        const openingMsg: Message = {
-          role: 'model',
-          it: fullOpening,
-          nl: '',
-          insight: kalender ? 'auguri' : 'benvenuto',
-        };
-        setMessages([openingMsg]);
-        speakIt(fullOpening);
-      }, 300);
-    }
+    setSetupStep(SETUP_STEPS.NAME);
+    setChildName('');
+    setBirthInput('');
+    setBirthDay(null);
+    setBirthMonth(null);
+    setMessage(null);
+    setDaysInfo(null);
+    setStatus('');
+    window.speechSynthesis.cancel();
   };
 
-  const saveTranscript = () => {
-    if (!messages.length) return;
-    const content = messages
-      .filter(m => m.role !== 'error')
-      .map(m => `${m.role === 'model' ? '🪞 Specchio' : '🧑 Io'}: ${m.it}\n   [${m.nl}]`)
-      .join('\n\n');
-    const blob = new Blob(
-      [`Specchio dell'Anima — Percorso\n\n${content}\n\n"Se oggi ti prenderai cura dei tuoi Sogni, domani saranno Loro a prendersi cura di te." — Stefano Rossi`],
-      { type: 'text/plain' }
-    );
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'specchio-anima-percorso.txt';
-    a.click();
+  // Bereken welk soort begroeting
+  const getDaysBanner = () => {
+    if (daysInfo === null) return null;
+    if (daysInfo === 0) return { emoji: '🎂', text: 'Gefeliciteerd! Vandaag is jouw dag!', color: '#f5e642' };
+    if (daysInfo > 0 && daysInfo <= 7) return { emoji: '⏳', text: `Nog ${daysInfo} dag${daysInfo === 1 ? '' : 'en'} tot jouw verjaardag!`, color: '#ffb347' };
+    if (daysInfo < 0 && daysInfo >= -7) return { emoji: '🎉', text: `Jouw verjaardag was ${Math.abs(daysInfo)} dag${Math.abs(daysInfo) === 1 ? '' : 'en'} geleden!`, color: '#a8edea' };
+    return null;
   };
+  const banner = getDaysBanner();
 
-  const focusLabel = FOCUS_OPTIONS.find(f => f.value === focus)?.label || '';
+  const isDone = setupStep === SETUP_STEPS.DONE;
 
   return (
     <div style={styles.app}>
       <style>{`
-        @keyframes pulse { 0%,100%{opacity:.6;transform:scale(1)} 50%{opacity:1;transform:scale(1.04)} }
-        @keyframes bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
-        @keyframes starFloat {
-          0%   { transform: translate(-50%,-50%) scale(1);    opacity: 0.65; }
-          50%  { opacity: 1; }
-          100% { transform: translate(-50%,-50%) scale(1.18); opacity: 0.9; }
+        @import url('https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=UnifrakturMaguntia&display=swap');
+        
+        @keyframes sparkle {
+          0%, 100% { opacity: 0; transform: scale(0.5); }
+          50% { opacity: 0.9; transform: scale(1.2); }
         }
+        @keyframes firefly {
+          0% { opacity: 0; transform: translate(0,0); }
+          25% { opacity: 0.8; }
+          50% { opacity: 0.3; transform: translate(${Math.random()>0.5?'':'-'}${20+Math.random()*30}px, ${Math.random()>0.5?'':'-'}${15+Math.random()*20}px); }
+          75% { opacity: 0.7; }
+          100% { opacity: 0; transform: translate(0,0); }
+        }
+        @keyframes mirrorPulse {
+          0%, 100% { box-shadow: 0 0 40px rgba(212,160,23,0.3), 0 0 80px rgba(212,160,23,0.1), inset 0 0 30px rgba(0,0,0,0.5); }
+          50% { box-shadow: 0 0 60px rgba(212,160,23,0.5), 0 0 120px rgba(212,160,23,0.2), inset 0 0 30px rgba(0,0,0,0.5); }
+        }
+        @keyframes titleShimmer {
+          0%, 100% { text-shadow: 0 0 10px rgba(245,230,66,0.5), 0 2px 4px rgba(0,0,0,0.8); }
+          50% { text-shadow: 0 0 20px rgba(245,230,66,0.9), 0 0 40px rgba(245,230,66,0.4), 0 2px 4px rgba(0,0,0,0.8); }
+        }
+        @keyframes speakingRing {
+          0%, 100% { opacity: 0.4; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.06); }
+        }
+        @keyframes thinkingDot {
+          0%, 100% { transform: translateY(0); opacity: 0.4; }
+          50% { transform: translateY(-6px); opacity: 1; }
+        }
+        @keyframes bannerGlow {
+          0%, 100% { box-shadow: 0 0 12px rgba(245,230,66,0.3); }
+          50% { box-shadow: 0 0 24px rgba(245,230,66,0.7); }
+        }
+        * { box-sizing: border-box; }
+        input::placeholder { color: rgba(245,230,66,0.3); }
       `}</style>
 
-      <div style={styles.bgGlow} />
+      {/* Achtergrond */}
+      <div style={styles.bg} />
+      <div style={styles.bgForest} />
 
-      <div style={styles.pageNav}>
-        <button onClick={() => setPage('mirror')}
-          style={{ ...styles.pageNavBtn, ...(page === 'mirror' ? styles.pageNavBtnActive : {}) }}>
-          🪞 Spiegel
-        </button>
-        <button onClick={() => setPage('instructions')}
-          style={{ ...styles.pageNavBtn, ...(page === 'instructions' ? styles.pageNavBtnActive : {}) }}>
-          <BookOpen size={11} style={{ marginRight: 4 }} /> Istruzioni
-        </button>
+      {/* Vuurvliegjes */}
+      <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 0 }}>
+        {FIREFLIES.map(f => <Firefly key={f.id} {...f} />)}
       </div>
 
-      {page === 'instructions' && <InstructionsPage onBack={() => setPage('mirror')} />}
+      {/* Titel */}
+      <header style={styles.header}>
+        <div style={{ textAlign: 'center' }}>
+          <h1 style={styles.title}>✦ Magische Spiegel ✦</h1>
+          <p style={styles.subtitle}>Vertel mij wie jij bent...</p>
+        </div>
+      </header>
 
-      {page === 'mirror' && (
-        <>
-          <header style={styles.header}>
-            <div>
-              <h1 style={styles.title}>Specchio dell'Anima</h1>
-              <p style={styles.subtitle}>Ispirato da Stefano Rossi</p>
-            </div>
-            <div style={styles.scoreBox}>
-              <span style={styles.scoreNum}>✨ {score}</span>
-              <span style={styles.scoreLabel}>luce interiore</span>
-            </div>
-          </header>
+      {/* Banner */}
+      <AnimatePresence>
+        {banner && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            style={{ ...styles.banner, borderColor: banner.color, color: banner.color, animation: 'bannerGlow 2s ease-in-out infinite' }}
+          >
+            {banner.emoji} {banner.text}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-          <div style={styles.mirrorSection}>
-            <div style={styles.mirrorOuter}>
-              <div style={styles.mirrorFrame}>
-                <div style={styles.mirrorInner}>
-                  <video ref={videoRef} autoPlay playsInline muted style={styles.video} />
-                  <div style={styles.mirrorOverlay}>
-                    {!streamRef.current && (
-                      <div style={styles.noCamMsg}>
-                        <FloatingStars />
-                        <span style={styles.noCamText}>Guarda dentro di te</span>
-                      </div>
-                    )}
-                  </div>
-                  {isSpeaking && <div style={styles.speakingRing} />}
-                </div>
-              </div>
-              <div style={styles.personaBadge}>✦ {focusLabel}</div>
-            </div>
-          </div>
+      {/* Spiegel sectie */}
+      <div style={styles.mirrorSection}>
+        <div style={{ position: 'relative', width: 260, height: 320 }}>
+          {/* Gouden lijst SVG */}
+          <OrnateFrame width={260} height={320} />
 
-          <div style={styles.quoteBlock}>
-            <p style={styles.quoteText}>
-              "Se oggi ti prenderai cura dei tuoi Sogni,<br />
-              domani saranno Loro a prendersi cura di te."
-            </p>
-            <p style={styles.quoteAuthor}>— Stefano Rossi —</p>
-          </div>
+          {/* Spiegel zelf */}
+          <div style={styles.mirrorFrame}>
+            <video ref={videoRef} autoPlay playsInline muted style={styles.video} />
+            
+            {/* Magische glinstering overlay */}
+            {isDone && <MagicParticles />}
 
-          <div style={styles.selectRow}>
-            <div style={styles.selectGroup}>
-              <label style={styles.selectLabel}>
-                <Lightbulb size={10} style={{ marginRight: 4 }} /> Focus · Daimon
-              </label>
-              <select value={focus} onChange={e => setFocus(e.target.value)} style={styles.select}>
-                {FOCUS_OPTIONS.map(f => (
-                  <option key={f.value} value={f.value}>{f.label}</option>
-                ))}
-              </select>
-            </div>
-            <div style={styles.selectGroup}>
-              {/* GEWIJZIGD: "Mood della Risposta" → "Mood Risposta" voor betere uitlijning */}
-              <label style={styles.selectLabel}>
-                <Heart size={10} style={{ marginRight: 4 }} /> Mood Risposta
-              </label>
-              <select value={mood} onChange={e => setMood(e.target.value)} style={styles.select}>
-                <option value="riflessivo">Riflessivo</option>
-                <option value="coraggioso">Coraggioso</option>
-                <option value="gentile">Gentile</option>
-                <option value="poetico">Poetico</option>
-                <option value="diretto">Diretto</option>
-              </select>
-            </div>
-          </div>
+            {/* Setup overlay */}
+            <AnimatePresence>
+              {setupStep !== SETUP_STEPS.DONE && (
+                <SetupStep
+                  step={setupStep}
+                  name={childName}
+                  setName={setChildName}
+                  birthInput={birthInput}
+                  setBirthInput={setBirthInput}
+                  onListenName={() => startListening(SETUP_STEPS.NAME)}
+                  onListenDate={() => startListening(SETUP_STEPS.DATE)}
+                  isListening={isListening}
+                  listenTarget={listenTarget}
+                  onConfirm={setupStep === SETUP_STEPS.NAME ? handleConfirmName : handleConfirmDate}
+                />
+              )}
+            </AnimatePresence>
 
-          <div style={styles.chatBox}>
-            {messages.length === 0 && (
-              <div style={styles.chatEmpty}>
-                <p style={styles.chatEmptyText}>Parla allo specchio... · Spreek tot de spiegel...</p>
-              </div>
-            )}
-            {messages.map((msg, i) => (
-              <motion.div key={i}
-                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start', marginBottom: 10 }}
-              >
-                <div style={msg.role === 'user' ? styles.bubbleUser : msg.role === 'error' ? styles.bubbleError : styles.bubbleModel}>
-                  {msg.role === 'model' ? (
-                    <>
-                      <span style={styles.bubbleIt}>{msg.it}</span>
-                      {msg.insight && <span style={styles.bubbleInsight}>· {msg.insight} ·</span>}
-                      {msg.nl && <span style={styles.bubbleNl}>{msg.nl}</span>}
-                      <button
-                        onClick={() => speakIt(msg.it)}
-                        title="Voorlezen · Leggi ad alta voce"
-                        style={{
-                          alignSelf: 'flex-end', marginTop: 4,
-                          background: 'none', border: 'none',
-                          cursor: 'pointer', fontSize: 15, opacity: 0.55,
-                          padding: '2px 4px', lineHeight: 1,
-                        }}
-                      >🔊</button>
-                    </>
-                  ) : msg.role === 'error' ? (
-                    <>
-                      <span style={styles.bubbleErrorIt}>⚠️ {msg.it}</span>
-                      <span style={styles.bubbleNl}>{msg.nl}</span>
-                    </>
-                  ) : (
-                    <>
-                      <span style={{ fontSize: 14 }}>{msg.it}</span>
-                      {msg.nl && <span style={styles.bubbleNl}>{msg.nl}</span>}
-                    </>
-                  )}
-                </div>
-              </motion.div>
-            ))}
+            {/* Denkende bellen */}
             {isThinking && (
-              <div style={styles.thinkingRow}>
-                {[0, 200, 400].map((d, i) => (
-                  <div key={i} style={{ ...styles.thinkingDot, animationDelay: `${d}ms` }} />
+              <div style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 6, zIndex: 15 }}>
+                {[0,200,400].map((d, i) => (
+                  <div key={i} style={{
+                    width: 8, height: 8, borderRadius: '50%',
+                    background: '#f5e642',
+                    animation: `thinkingDot 1s ease-in-out ${d}ms infinite`,
+                    boxShadow: '0 0 6px #f5e642',
+                  }} />
                 ))}
               </div>
             )}
-            <div ref={chatEndRef} />
+
+            {/* Spreek-ring */}
+            {isSpeaking && (
+              <div style={{
+                position: 'absolute', inset: -4, borderRadius: '50% 50% 48% 48%',
+                border: '3px solid #f5e642',
+                animation: 'speakingRing 1s ease-in-out infinite',
+                pointerEvents: 'none', zIndex: 4,
+              }} />
+            )}
           </div>
 
-          <p style={styles.statusText}>{status}</p>
-
-          <div style={styles.controls}>
-            <button onClick={handleReset} style={styles.btnSec} title="Opnieuw beginnen">
-              <RotateCcw size={18} />
-            </button>
-            <button
-              onMouseDown={startRecording}
-              onMouseUp={stopRecording}
-              onTouchStart={startRecording}
-              onTouchEnd={stopRecording}
-              style={{ ...styles.btnMic, ...(isRecording ? styles.btnMicActive : {}) }}
+          {/* Naam badge */}
+          {isDone && childName && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              style={styles.nameBadge}
             >
-              {isRecording ? <MicOff size={28} color="#fff" /> : <Mic size={28} color="#05050a" />}
-            </button>
-            <button onClick={saveTranscript} style={styles.btnSec} title="Sla percorso op">
-              <Save size={18} />
-            </button>
-          </div>
+              ✦ {childName} ✦
+            </motion.div>
+          )}
+        </div>
+      </div>
 
-          <button onClick={() => setShowKeyModal(true)} style={styles.btnKey}>
-            <Key size={10} style={{ marginRight: 4 }} /> Configura API Key
+      {/* Status */}
+      {status ? (
+        <p style={styles.status}>{status}</p>
+      ) : null}
+
+      {/* Tekstballon */}
+      <AnimatePresence>
+        {message && (
+          <div style={{ width: '100%', maxWidth: 420, padding: '0 12px', marginTop: 8 }}>
+            <SpeechBubble
+              message={message}
+              lang={lang}
+              setLang={setLang}
+              onSpeak={() => speakText(message[lang] || message.nl)}
+            />
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Volgend kind knop */}
+      {isDone && !isThinking && message && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 1.5 }}
+          style={{ marginTop: 14, zIndex: 5, position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}
+        >
+          <button onClick={handleReset} style={styles.btnNextChild}>
+            ✨ Volgend kind ✨
           </button>
-        </>
+          <p style={{ margin: 0, fontSize: 10, color: 'rgba(245,230,66,0.3)', fontStyle: 'italic' }}>
+            Tik hier als een ander kind aan de beurt is
+          </p>
+        </motion.div>
       )}
 
+      {/* API sleutel knop */}
+      <button onClick={() => setShowKeyModal(true)} style={styles.btnKey}>
+        <Key size={10} style={{ marginRight: 4 }} />
+        {apiKey ? 'API sleutel ✓' : 'API sleutel invoeren'}
+      </button>
+
+      {/* API sleutel modal */}
       <AnimatePresence>
         {showKeyModal && (
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             style={styles.modal}
+            onClick={(e) => e.target === e.currentTarget && setShowKeyModal(false)}
           >
             <div style={styles.modalBox}>
-              <h2 style={styles.modalTitle}>Gemini API Key</h2>
-              <p style={styles.modalHint}>Gratis sleutel: aistudio.google.com</p>
+              <h2 style={styles.modalTitle}>🔑 API Sleutel</h2>
+              <p style={styles.modalHint}>
+                Gratis sleutel via claude.ai of via de Anthropic API.<br />
+                De sleutel wordt alleen op jouw apparaat opgeslagen.
+              </p>
               <input
                 type="password"
-                defaultValue={customKey}
                 id="keyInput"
+                defaultValue={apiKey}
+                placeholder="sk-ant-..."
                 style={styles.modalInput}
-                placeholder="Inserisci la tua chiave..."
               />
-              <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-                <button onClick={() => setShowKeyModal(false)} style={styles.modalBtnCancel}>Annulla</button>
+              <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+                <button onClick={() => setShowKeyModal(false)} style={styles.modalBtnCancel}>Annuleer</button>
                 <button
-                  onClick={() => saveCustomKey((document.getElementById('keyInput') as HTMLInputElement).value)}
+                  onClick={() => saveKey(document.getElementById('keyInput').value)}
                   style={styles.modalBtnSave}
-                >Salva</button>
+                >Opslaan</button>
               </div>
             </div>
           </motion.div>
@@ -728,233 +784,155 @@ export default function App() {
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────
-const C = {
-  bg: '#05050a',
-  blue: '#70a1ff',
-  blueDim: 'rgba(112,161,255,0.15)',
-  blueBorder: 'rgba(112,161,255,0.25)',
-  text: '#e0e0f0',
-  dim: 'rgba(255,255,255,0.45)',
-};
-
-const styles: Record<string, React.CSSProperties> = {
+const styles = {
   app: {
-    minHeight: '100vh', background: C.bg, color: C.text,
-    fontFamily: "'Georgia', serif",
+    minHeight: '100vh',
+    background: '#0d0a04',
+    color: '#f0e8d0',
+    fontFamily: "'IM Fell English', serif",
     display: 'flex', flexDirection: 'column', alignItems: 'center',
-    padding: '0 0 30px', position: 'relative', overflow: 'hidden',
+    padding: '0 0 40px', position: 'relative', overflow: 'hidden',
   },
-  bgGlow: {
+  bg: {
     position: 'fixed', inset: 0,
-    background: 'radial-gradient(ellipse at 50% 30%, rgba(30,55,153,0.25) 0%, transparent 70%)',
-    pointerEvents: 'none',
+    background: 'radial-gradient(ellipse at 50% 0%, rgba(60,35,5,0.8) 0%, rgba(10,6,2,0.95) 60%, #050300 100%)',
+    pointerEvents: 'none', zIndex: 0,
   },
-  pageNav: {
+  bgForest: {
+    position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 0,
+    background: `
+      radial-gradient(ellipse at 10% 90%, rgba(20,50,10,0.3) 0%, transparent 50%),
+      radial-gradient(ellipse at 90% 90%, rgba(20,50,10,0.3) 0%, transparent 50%),
+      radial-gradient(ellipse at 50% 100%, rgba(30,60,10,0.4) 0%, transparent 40%)
+    `,
+  },
+  header: {
     width: '100%', maxWidth: 480,
-    display: 'flex', gap: 6, padding: '10px 16px 4px', zIndex: 10,
+    padding: '20px 16px 10px',
+    display: 'flex', justifyContent: 'center',
+    position: 'relative', zIndex: 5,
   },
-  pageNavBtn: {
-    flex: 1, padding: '7px 0',
-    background: 'rgba(112,161,255,0.05)', border: '1px solid rgba(112,161,255,0.15)',
-    borderRadius: 20, fontSize: 11, color: 'rgba(112,161,255,0.5)', cursor: 'pointer',
-    letterSpacing: '0.08em', display: 'flex', alignItems: 'center', justifyContent: 'center',
+  title: {
+    margin: 0, fontSize: 22, fontWeight: 700,
+    fontFamily: "'IM Fell English', serif",
+    color: '#f5e642',
+    animation: 'titleShimmer 3s ease-in-out infinite',
+    letterSpacing: '0.05em',
+  },
+  subtitle: {
+    margin: '4px 0 0', fontSize: 11,
+    color: 'rgba(245,230,66,0.45)',
+    letterSpacing: '0.15em',
+    fontStyle: 'italic',
+  },
+  banner: {
+    width: '100%', maxWidth: 420,
+    margin: '0 12px 10px',
+    padding: '8px 16px',
+    background: 'rgba(20,12,0,0.85)',
+    border: '1px solid',
+    borderRadius: 20,
+    fontSize: 13, textAlign: 'center',
+    fontStyle: 'italic',
+    letterSpacing: '0.05em',
+    zIndex: 5, position: 'relative',
+  },
+  mirrorSection: {
+    display: 'flex', flexDirection: 'column', alignItems: 'center',
+    position: 'relative', zIndex: 5, marginBottom: 8,
+  },
+  mirrorFrame: {
+    position: 'absolute',
+    top: 16, left: 20,
+    width: 220, height: 282,
+    borderRadius: '50% 50% 47% 47%',
+    overflow: 'hidden',
+    background: 'linear-gradient(160deg, #0d1a0a 0%, #050a04 100%)',
+    animation: 'mirrorPulse 4s ease-in-out infinite',
+    zIndex: 1,
+  },
+  video: {
+    width: '100%', height: '100%',
+    objectFit: 'cover',
+    transform: 'scaleX(-1)',
+    filter: 'brightness(0.85) contrast(1.05) saturate(0.8)',
+  },
+  nameBadge: {
+    position: 'absolute', bottom: -8, left: '50%',
+    transform: 'translateX(-50%)',
+    background: 'linear-gradient(135deg, rgba(30,18,2,0.95), rgba(20,12,0,0.95))',
+    border: '1px solid rgba(212,160,23,0.5)',
+    borderRadius: 20, padding: '4px 18px',
+    fontSize: 12, color: '#f5e642',
+    whiteSpace: 'nowrap', zIndex: 10,
+    letterSpacing: '0.08em',
+    boxShadow: '0 2px 12px rgba(0,0,0,0.5)',
+  },
+  status: {
+    fontSize: 12, color: 'rgba(245,230,66,0.6)',
+    fontStyle: 'italic', margin: '4px 0',
+    zIndex: 5, textAlign: 'center', position: 'relative',
+  },
+  btnNextChild: {
+    padding: '11px 28px',
+    background: 'linear-gradient(135deg, #8B6914, #d4a017, #f5e642, #d4a017, #8B6914)',
+    backgroundSize: '200% auto',
+    border: 'none', borderRadius: 30,
+    color: '#1a0e00', fontWeight: 700, cursor: 'pointer',
+    fontSize: 14, fontFamily: "'IM Fell English', serif",
+    letterSpacing: '0.08em',
+    boxShadow: '0 4px 20px rgba(212,160,23,0.5), 0 0 40px rgba(212,160,23,0.2)',
     transition: 'all 0.2s',
   },
-  pageNavBtnActive: {
-    background: C.blueDim, border: `1px solid ${C.blueBorder}`, color: C.blue, fontWeight: 600,
-  },
-  instrPage: {
-    width: '100%', maxWidth: 480, padding: '10px 16px 20px',
-    display: 'flex', flexDirection: 'column', gap: 0, zIndex: 1,
-  },
-  instrLangRow: { display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' as const },
-  instrLangBtn: {
-    padding: '5px 12px', borderRadius: 20, border: '1px solid rgba(112,161,255,0.2)',
-    background: 'transparent', color: 'rgba(112,161,255,0.5)',
-    fontSize: 11, cursor: 'pointer', letterSpacing: '0.05em', transition: 'all 0.2s',
-  },
-  instrLangBtnActive: {
-    background: C.blueDim, border: `1px solid ${C.blueBorder}`, color: C.blue, fontWeight: 600,
-  },
-  instrTitle: { margin: '0 0 12px', fontSize: 17, fontWeight: 400, color: C.blue, letterSpacing: '0.1em' },
-  daimonBox: {
-    background: 'rgba(112,161,255,0.06)', border: '1px solid rgba(112,161,255,0.2)',
-    borderRadius: 12, padding: '12px 16px', marginBottom: 14,
-  },
-  daimonTitle: {
-    margin: '0 0 8px', fontSize: 11, color: C.blue,
-    letterSpacing: '0.15em', textTransform: 'uppercase' as const,
-  },
-  daimonItem: { margin: '3px 0', fontSize: 11, color: 'rgba(224,224,240,0.7)', lineHeight: 1.5 },
-  daimonNum: { color: C.blue, fontWeight: 600 },
-  instrSteps: { display: 'flex', flexDirection: 'column' as const, gap: 8, marginBottom: 16 },
-  instrStep: {
-    display: 'flex', gap: 10, alignItems: 'flex-start',
-    background: C.blueDim, border: `1px solid ${C.blueBorder}`,
-    borderRadius: 10, padding: '9px 12px',
-  },
-  instrStepHighlight: { background: 'rgba(255,210,80,0.08)', border: '1px solid rgba(255,210,80,0.35)' },
-  instrStepIcon: { fontSize: 15, flexShrink: 0, marginTop: 1 },
-  instrStepText: { fontSize: 12, color: 'rgba(224,224,240,0.85)', lineHeight: 1.6, letterSpacing: '0.02em' },
-  instrStepTextHighlight: { color: 'rgba(255,230,140,0.95)' },
-  instrFreeKey: {
-    display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
-    background: 'rgba(112,161,255,0.07)', border: '1px dashed rgba(112,161,255,0.25)',
-    borderRadius: 10, marginTop: 4,
-  },
-  instrLinkText: { color: C.blue, fontSize: 12, letterSpacing: '0.03em' },
-  header: {
-    width: '100%', maxWidth: 480, display: 'flex', alignItems: 'center',
-    justifyContent: 'space-between', padding: '10px 16px', zIndex: 1,
-  },
-  title: { margin: 0, fontSize: 20, fontWeight: 300, color: C.blue, letterSpacing: '0.15em' },
-  subtitle: { margin: 0, fontSize: 10, color: 'rgba(112,161,255,0.5)', letterSpacing: '0.2em', textTransform: 'uppercase' },
-  scoreBox: {
-    textAlign: 'center', background: C.blueDim,
-    borderRadius: 10, padding: '6px 12px', border: `1px solid ${C.blueBorder}`,
-  },
-  scoreNum: { display: 'block', fontSize: 18, fontWeight: 700, color: C.blue },
-  scoreLabel: { fontSize: 9, color: C.dim, textTransform: 'uppercase', letterSpacing: '0.1em' },
-  mirrorSection: { margin: '6px 0', zIndex: 1 },
-  mirrorOuter: { display: 'flex', flexDirection: 'column', alignItems: 'center' },
-  mirrorFrame: {
-    width: 200, height: 250, borderRadius: '50% 50% 48% 48%',
-    border: `6px solid ${C.blue}`,
-    boxShadow: `0 0 40px rgba(112,161,255,0.4), inset 0 0 20px rgba(0,0,0,0.4)`,
-    overflow: 'hidden', background: '#060620', position: 'relative',
-  },
-  mirrorInner: { width: '100%', height: '100%', position: 'relative' },
-  video: { width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' },
-  mirrorOverlay: {
-    position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
-    justifyContent: 'center', pointerEvents: 'none',
-  },
-  noCamMsg: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 },
-  noCamText: {
-    fontSize: 10, color: 'rgba(112,161,255,0.4)',
-    textTransform: 'uppercase', letterSpacing: '0.15em', textAlign: 'center',
-  },
-  speakingRing: {
-    position: 'absolute', inset: -6, borderRadius: '50%',
-    border: `3px solid ${C.blue}`, animation: 'pulse 1.2s ease-in-out infinite', pointerEvents: 'none',
-  },
-  personaBadge: {
-    marginTop: 10, background: C.blueDim, border: `1px solid ${C.blueBorder}`,
-    borderRadius: 20, padding: '4px 18px', fontSize: 11, color: C.blue,
-    letterSpacing: '0.08em', maxWidth: 260, textAlign: 'center',
-  },
-  quoteBlock: {
-    width: '100%', maxWidth: 480, padding: '12px 24px', margin: '8px 0 4px',
-    borderTop: `1px solid ${C.blueBorder}`, borderBottom: `1px solid ${C.blueBorder}`,
-    background: 'rgba(112,161,255,0.04)', textAlign: 'center', zIndex: 1,
-  },
-  quoteText: {
-    margin: 0, fontSize: 12, lineHeight: 1.7,
-    color: 'rgba(112,161,255,0.75)', fontStyle: 'italic', letterSpacing: '0.02em',
-  },
-  quoteAuthor: {
-    margin: '6px 0 0', fontSize: 10,
-    color: 'rgba(112,161,255,0.4)', letterSpacing: '0.2em', textTransform: 'uppercase',
-  },
-  selectRow: {
-    width: '100%', maxWidth: 480, display: 'grid', gridTemplateColumns: '1fr 1fr',
-    gap: 10, padding: '10px 16px', zIndex: 1,
-  },
-  selectGroup: { display: 'flex', flexDirection: 'column', gap: 4 },
-  selectLabel: {
-    fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.2em',
-    color: 'rgba(112,161,255,0.6)', display: 'flex', alignItems: 'center',
-  },
-  select: {
-    background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.blueBorder}`,
-    borderRadius: 8, padding: '7px 10px', fontSize: 11, color: C.blue, outline: 'none',
-  },
-  chatBox: {
-    width: '100%', maxWidth: 480, maxHeight: 190, overflowY: 'auto',
-    padding: '0 12px', zIndex: 1,
-  },
-  chatEmpty: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: 60 },
-  chatEmptyText: { fontSize: 11, color: 'rgba(112,161,255,0.3)', fontStyle: 'italic', letterSpacing: '0.05em' },
-  bubbleModel: {
-    background: C.blueDim, border: `1px solid ${C.blueBorder}`,
-    borderRadius: '18px 18px 18px 4px', padding: '10px 14px', maxWidth: '82%',
-    display: 'flex', flexDirection: 'column', gap: 4,
-  },
-  bubbleUser: {
-    background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)',
-    borderRadius: '18px 18px 4px 18px', padding: '10px 14px', maxWidth: '82%',
-    fontSize: 14, color: 'rgba(255,255,255,0.7)', fontStyle: 'italic',
-  },
-  bubbleError: {
-    background: 'rgba(200,50,50,0.12)', border: '1px solid rgba(200,50,50,0.25)',
-    borderRadius: '18px 18px 18px 4px', padding: '10px 14px', maxWidth: '92%',
-    display: 'flex', flexDirection: 'column', gap: 6,
-  },
-  bubbleErrorIt: { fontSize: 13, color: '#ffaaaa', lineHeight: 1.55 },
-  bubbleIt: { fontSize: 15, color: C.blue, fontStyle: 'normal', lineHeight: 1.5 },
-  bubbleInsight: { fontSize: 10, color: 'rgba(112,161,255,0.4)', letterSpacing: '0.15em', textTransform: 'uppercase' },
-  bubbleNl: { fontSize: 11, color: C.dim, fontStyle: 'italic', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 4, marginTop: 2 },
-  thinkingRow: { display: 'flex', gap: 6, padding: '8px 14px' },
-  thinkingDot: { width: 6, height: 6, borderRadius: '50%', background: C.blue, animation: 'bounce 1s infinite' },
-  statusText: {
-    fontSize: 11, color: 'rgba(112,161,255,0.6)',
-    fontStyle: 'italic', margin: '4px 0', zIndex: 1, textAlign: 'center',
-  },
-  controls: { display: 'flex', alignItems: 'center', gap: 22, marginTop: 8, zIndex: 1 },
-  btnMic: {
-    width: 68, height: 68, borderRadius: '50%',
-    border: `3px solid ${C.blue}`, background: C.blue, fontSize: 28,
-    cursor: 'pointer', transition: 'all 0.2s',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    boxShadow: '0 0 20px rgba(112,161,255,0.4)',
-  },
-  btnMicActive: {
-    background: 'rgba(200,50,50,0.8)', border: '3px solid #e74c3c',
-    transform: 'scale(1.1)', boxShadow: '0 0 20px rgba(231,76,60,0.5)',
-  },
-  btnSec: {
-    width: 46, height: 46, borderRadius: '50%',
-    border: `2px solid ${C.blueBorder}`, background: 'rgba(0,0,0,0.4)',
-    cursor: 'pointer', color: C.blue,
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-  },
   btnKey: {
-    marginTop: 12, padding: '6px 16px', background: 'transparent',
-    border: '1px solid rgba(112,161,255,0.15)', borderRadius: 20,
-    fontSize: 10, color: 'rgba(112,161,255,0.35)',
-    textTransform: 'uppercase', letterSpacing: '0.15em', cursor: 'pointer',
-    display: 'flex', alignItems: 'center', zIndex: 1,
+    marginTop: 14, padding: '5px 14px',
+    background: 'transparent',
+    border: '1px solid rgba(212,160,23,0.15)',
+    borderRadius: 20, fontSize: 10,
+    color: 'rgba(212,160,23,0.4)',
+    letterSpacing: '0.1em', cursor: 'pointer',
+    display: 'flex', alignItems: 'center',
+    position: 'relative', zIndex: 5,
+    fontFamily: "'IM Fell English', serif",
   },
   modal: {
-    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)',
+    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)',
     display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
   },
   modalBox: {
-    background: '#0c1a3a', border: `2px solid ${C.blue}`,
-    borderRadius: 20, padding: 28, maxWidth: 300, width: '90%',
+    background: 'linear-gradient(160deg, #1a100a, #0d0804)',
+    border: '2px solid rgba(212,160,23,0.5)',
+    borderRadius: 20, padding: 24, maxWidth: 300, width: '90%',
+    boxShadow: '0 8px 40px rgba(0,0,0,0.8)',
   },
   modalTitle: {
-    margin: '0 0 4px', fontWeight: 300, fontSize: 20,
-    color: C.blue, textAlign: 'center', letterSpacing: '0.1em',
+    margin: '0 0 4px', fontWeight: 400, fontSize: 18,
+    color: '#f5e642', textAlign: 'center',
+    fontFamily: "'IM Fell English', serif",
   },
   modalHint: {
-    margin: '0 0 16px', fontSize: 11,
-    color: 'rgba(112,161,255,0.5)', textAlign: 'center', letterSpacing: '0.04em',
+    margin: '0 0 14px', fontSize: 11, lineHeight: 1.6,
+    color: 'rgba(245,230,66,0.45)', textAlign: 'center',
   },
   modalInput: {
-    width: '100%', boxSizing: 'border-box',
-    background: 'rgba(0,0,0,0.4)', border: `1px solid ${C.blueBorder}`,
+    width: '100%',
+    background: 'rgba(0,0,0,0.4)',
+    border: '1px solid rgba(212,160,23,0.3)',
     borderRadius: 10, padding: '10px 14px',
-    fontSize: 14, color: 'white', outline: 'none', textAlign: 'center',
+    fontSize: 13, color: '#f0e8d0', outline: 'none', textAlign: 'center',
   },
   modalBtnCancel: {
-    flex: 1, padding: '10px', background: 'transparent',
+    flex: 1, padding: '9px', background: 'transparent',
     border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10,
-    color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: 12,
+    color: 'rgba(255,255,255,0.35)', cursor: 'pointer', fontSize: 12,
+    fontFamily: "'IM Fell English', serif",
   },
   modalBtnSave: {
-    flex: 1, padding: '10px', background: C.blue, border: 'none',
-    borderRadius: 10, color: C.bg, fontWeight: 700, cursor: 'pointer',
-    fontSize: 12, letterSpacing: '0.1em',
+    flex: 1, padding: '9px',
+    background: 'linear-gradient(135deg, #d4a017, #f5e642)',
+    border: 'none', borderRadius: 10,
+    color: '#1a0e00', fontWeight: 700, cursor: 'pointer',
+    fontSize: 12, fontFamily: "'IM Fell English', serif",
+    letterSpacing: '0.05em',
   },
 };
