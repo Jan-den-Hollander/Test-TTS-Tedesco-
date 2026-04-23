@@ -1,12 +1,9 @@
 /**
  * Magische Spiegel — Verjaardagsspiegel voor Kinderen
- * Efteling / Anton Piek stijl  ·  v9
- * Wijzigingen v5:
- *  - OrnateFrame vervangen door rozenkrans: groene rank, rozen in bloei, knoppen en bladeren langs ellips
- * Wijzigingen v4:
- *  - Vriendelijkere foutmelding: "De spiegel kan nu niet antwoorden. Het is druk op de server. Probeer het later opnieuw!"
- *  - Foutmelding wordt automatisch voorgelezen
- *  - Opnieuw-knop verschijnt bij fout zodat kind weet wat te doen
+ * Efteling / Anton Piek stijl  ·  v10
+ * Wijzigingen v10:
+ *  - Spiegel iets lager zodat bovenkant zichtbaar is onder tekstballon
+ *  - Vertaalvlaggen verwijderd uit tekstballon (alleen 🔊 knop blijft)
  */
 import { useState, useRef, useEffect } from 'react';
 import { Key } from 'lucide-react';
@@ -59,35 +56,21 @@ async function speakWithFallback(text, langCode = 'nl', onEnd = () => {}) {
   utt.rate = 0.88; utt.pitch = 1.1;
   utt.onend = onEnd; utt.onerror = onEnd;
   window.speechSynthesis.speak(utt);
-  // Failsafe: sommige browsers vuren onend nooit
   setTimeout(() => { try { window.speechSynthesis.cancel(); } catch {} }, text.length * 70 + 3000);
 }
 
-// ── speakAll: spreek boodschap voor, dan elk feitje met jaar ─────────────
-// Keten: boodschap → korte pauze → "En wist je dat..." → feit 1 → feit 2 → feit 3 → onEnd
 async function speakAll(boodschap, facts, langCode = 'nl', onEnd = () => {}) {
   if (!boodschap) { onEnd(); return; }
-
-  // Bouw de feitjes-tekst als één aaneengesloten verhaal
-  const maanden = ['januari','februari','maart','april','mei','juni',
-    'juli','augustus','september','oktober','november','december'];
-
   const feitjesTekst = facts.length > 0
     ? 'En wist je dat er op jouw verjaardag ook bijzondere dingen zijn gebeurd? '
       + facts.map(f => `In het jaar ${f.year}: ${f[langCode] || f.nl}`).join('. ') + '.'
     : '';
-
-  const volledigeTekst = feitjesTekst
-    ? `${boodschap} ${feitjesTekst}`
-    : boodschap;
-
+  const volledigeTekst = feitjesTekst ? `${boodschap} ${feitjesTekst}` : boodschap;
   speakWithFallback(volledigeTekst, langCode, onEnd);
 }
 
 
 const STEP = { NAME: 'name', DATE: 'date', DONE: 'done' };
-const LANG_LABELS = { nl: '🇳🇱 NL', en: '🇬🇧 EN', fr: '🇫🇷 FR', de: '🇩🇪 DE' };
-const LANG_CODE   = { nl: 'nl', en: 'en', fr: 'fr', de: 'de' };
 
 const SPOKEN_Q = {
   name: 'Ik ben de Magische Spiegel. Vertel mij eens, hoe heet jij?',
@@ -110,13 +93,10 @@ Kind: ${name} | Verjaardag: ${day} ${maand} | ${timing}
 Geef een persoonlijke verjaardagsboodschap (max 3 zinnen) én precies 2 of 3 echte historische feitjes van ${day} ${maand} die kinderen leuk vinden (artiesten, dieren, speelgoed, pretparken, tekenfilms, uitvindingen).
 
 Antwoord ALLEEN als JSON zonder markdown:
-{"nl":"...","en":"...","fr":"...","de":"...","facts":[{"year":1984,"nl":"...","en":"...","fr":"...","de":"..."}]}`;
+{"nl":"...","facts":[{"year":1984,"nl":"..."}]}`;
 };
 
-// ── Ornate spiegellijst SVG v7 — sprookjes emoji-krans ───────────────────
-// Emoji's als SVG <text> elementen langs een golvende rank
-// De rank slingert organisch — afwisselend binnen/buiten de gouden ellips
-
+// ── Ornate spiegellijst SVG ───────────────────────────────────────────────
 function ptOnEllipse(cx, cy, rx, ry, angleDeg) {
   const a = (angleDeg - 90) * Math.PI / 180;
   return [cx + rx * Math.cos(a), cy + ry * Math.sin(a)];
@@ -126,44 +106,34 @@ function OrnateFrame({ W = 270, H = 330 }) {
   const cx = W / 2, cy = H / 2;
   const rx = cx - 10, ry = cy - 10;
 
-  // Krans-items: emoji langs de rand, met wisselende offset (binnen/buiten ellips)
-  // offset > 0 = buiten gouden rand (over de rand heen), < 0 = binnen
-  // fontSize bepaalt de grootte
   const kransPunten = [
-    // Boven
     { a:  0, emoji:'🌹', fs:22, off: 14, rot:  0 },
     { a: 14, emoji:'🍀', fs:15, off:  4, rot: 20 },
     { a: 25, emoji:'🌱', fs:13, off: -2, rot: 35 },
     { a: 37, emoji:'🥀', fs:17, off:  8, rot: 50 },
     { a: 50, emoji:'🍀', fs:14, off:  2, rot: 65 },
-    // Rechts boven
     { a: 63, emoji:'🌸', fs:20, off: 12, rot: 80 },
     { a: 76, emoji:'🌱', fs:12, off: -4, rot: 95 },
     { a: 87, emoji:'🍀', fs:15, off:  5, rot:110 },
     { a: 99, emoji:'🌹', fs:19, off: 11, rot:125 },
     { a:111, emoji:'🌱', fs:12, off: -3, rot:140 },
-    // Rechts midden
     { a:122, emoji:'🍀', fs:16, off:  6, rot:155 },
     { a:134, emoji:'🥀', fs:18, off: 13, rot:170 },
     { a:146, emoji:'🌱', fs:13, off: -2, rot:185 },
     { a:157, emoji:'🌸', fs:20, off: 14, rot:200 },
     { a:169, emoji:'🍀', fs:14, off:  3, rot:215 },
-    // Rechts onder
     { a:180, emoji:'🌹', fs:21, off: 14, rot:180 },
     { a:192, emoji:'🌱', fs:12, off: -4, rot:245 },
     { a:204, emoji:'🍀', fs:15, off:  5, rot:260 },
-    // Onder
     { a:216, emoji:'🥀', fs:18, off: 12, rot:200 },
     { a:228, emoji:'🌱', fs:12, off: -3, rot:290 },
     { a:239, emoji:'🌸', fs:21, off: 15, rot:185 },
     { a:251, emoji:'🍀', fs:14, off:  4, rot:320 },
     { a:263, emoji:'🌹', fs:19, off: 12, rot:195 },
-    // Links onder
     { a:274, emoji:'🌱', fs:12, off: -4, rot:350 },
     { a:286, emoji:'🍀', fs:15, off:  5, rot: 10 },
     { a:298, emoji:'🌸', fs:20, off: 13, rot: 25 },
     { a:309, emoji:'🌱', fs:12, off: -2, rot: 40 },
-    // Links midden
     { a:320, emoji:'🥀', fs:17, off:  9, rot: 55 },
     { a:332, emoji:'🍀', fs:14, off:  3, rot: 70 },
     { a:344, emoji:'🌹', fs:20, off: 13, rot: -5 },
@@ -198,14 +168,10 @@ function OrnateFrame({ W = 270, H = 330 }) {
         </filter>
       </defs>
 
-      {/* ── Groene slingerende rank-stengel (golvend bezier pad langs de ellips) ── */}
-      {/* We tekenen de rank als een reeks kleine Bezier-bogen die de ellips volgen
-          maar hier en daar wat naar binnen of buiten afwijken */}
       {(() => {
-        // Bouw een golvend pad van ~72 punten
         const pts = Array.from({ length: 73 }, (_, i) => {
-          const angle = i * 5; // 0..360
-          const wave = Math.sin(i * 0.9) * 6; // organische golf
+          const angle = i * 5;
+          const wave = Math.sin(i * 0.9) * 6;
           const [x, y] = ptOnEllipse(cx, cy, rx + wave, ry + wave, angle);
           return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
         });
@@ -222,7 +188,6 @@ function OrnateFrame({ W = 270, H = 330 }) {
         );
       })()}
 
-      {/* ── Gouden dubbele ellips OVER de rank ── */}
       <ellipse cx={cx} cy={cy} rx={rx}    ry={ry}
         fill="none" stroke="url(#gG1)" strokeWidth="5.5"/>
       <ellipse cx={cx} cy={cy} rx={rx-8}  ry={ry-8}
@@ -230,13 +195,10 @@ function OrnateFrame({ W = 270, H = 330 }) {
       <ellipse cx={cx} cy={cy} rx={rx-13} ry={ry-13}
         fill="none" stroke="#f5e642" strokeWidth="0.5" opacity="0.18"/>
 
-      {/* ── Emoji krans — laag 1: kleine groene elementen (achter goud) ── */}
       {kransPunten.filter(p => ['🌱','🍀'].includes(p.emoji)).map((p, i) => {
         const [px, py] = ptOnEllipse(cx, cy, rx + p.off, ry + p.off, p.a);
         return (
-          <text key={`g${i}`}
-            x={px} y={py}
-            fontSize={p.fs}
+          <text key={`g${i}`} x={px} y={py} fontSize={p.fs}
             textAnchor="middle" dominantBaseline="middle"
             transform={`rotate(${p.rot},${px},${py})`}
             filter="url(#emojiShadow)"
@@ -246,13 +208,10 @@ function OrnateFrame({ W = 270, H = 330 }) {
         );
       })}
 
-      {/* ── Emoji krans — laag 2: bloemen (voor goud) ── */}
       {kransPunten.filter(p => ['🌹','🥀','🌸'].includes(p.emoji)).map((p, i) => {
         const [px, py] = ptOnEllipse(cx, cy, rx + p.off, ry + p.off, p.a);
         return (
-          <text key={`f${i}`}
-            x={px} y={py}
-            fontSize={p.fs}
+          <text key={`f${i}`} x={px} y={py} fontSize={p.fs}
             textAnchor="middle" dominantBaseline="middle"
             transform={`rotate(${p.rot},${px},${py})`}
             filter="url(#roseShadow)"
@@ -262,7 +221,6 @@ function OrnateFrame({ W = 270, H = 330 }) {
         );
       })}
 
-      {/* ── 🪞 Gouden medaillon bovenin ── */}
       <circle cx={cx} cy={13} r={23} fill="url(#gG1)" filter="url(#gGlow)"/>
       <circle cx={cx} cy={13} r={19} fill="#100802"/>
       <circle cx={cx} cy={13} r={17} fill="url(#gG1)" opacity="0.08"/>
@@ -271,14 +229,12 @@ function OrnateFrame({ W = 270, H = 330 }) {
         stroke="url(#gG1)" strokeWidth="2.5" opacity="0.75"/>
       <circle cx={cx} cy={37} r={3.5} fill="url(#gG1)"/>
 
-      {/* ── Onderkant sierrand ── */}
       <path d={`M${cx-42} ${H-18} Q${cx} ${H-4} ${cx+42} ${H-18}`}
         fill="none" stroke="url(#gG1)" strokeWidth="2.5"/>
       <circle cx={cx} cy={H-4} r={5} fill="url(#gG1)"/>
       {[-24,24].map((dx, i) =>
         <circle key={i} cx={cx+dx} cy={H-14} r={3} fill="#d4a017" opacity="0.72"/>)}
 
-      {/* ── Hoek-glinstertjes ── */}
       {[
         [cx, cy-ry-18], [cx, cy+ry+12],
         [cx-rx-12, cy], [cx+rx+12, cy],
@@ -299,14 +255,13 @@ const FIREFLIES = Array.from({ length: 16 }, (_, i) => ({
   dx: (Math.random()-0.5)*60, dy: (Math.random()-0.5)*40,
 }));
 
-// ── Magische deeltjes (in spiegel na resultaat) ───────────────────────────
 const PARTICLES = Array.from({ length: 10 }, (_, i) => ({
   id: i, x: 10+Math.random()*80, y: 10+Math.random()*80,
   size: 4+Math.random()*7, delay: Math.random()*3, dur: 2+Math.random()*2,
   color: ['#f5e642','#fff8c0','#ffb347','#ff9de2','#a8edea'][i%5],
 }));
 
-// ── Setup overlay (in de spiegel) ─────────────────────────────────────────
+// ── Setup overlay ─────────────────────────────────────────────────────────
 function SetupOverlay({ step, name, setName, birthInput, setBirthInput,
   onListen, isListening, listenTarget, onConfirm }) {
 
@@ -356,7 +311,6 @@ function SetupOverlay({ step, name, setName, birthInput, setBirthInput,
       />
 
       <div style={{ display:'flex', gap:8, alignItems:'center' }}>
-        {/* Microfoon */}
         <button
           onClick={() => onListen(step)}
           style={{
@@ -373,7 +327,6 @@ function SetupOverlay({ step, name, setName, birthInput, setBirthInput,
           {isListening && listenTarget===step ? '🔴' : '🎤'}
         </button>
 
-        {/* Submit / Verder */}
         <button
           onClick={onConfirm}
           style={{
@@ -399,10 +352,10 @@ function SetupOverlay({ step, name, setName, birthInput, setBirthInput,
   );
 }
 
-// ── Tekstballon ───────────────────────────────────────────────────────────
-function SpeechBubble({ message, lang, setLang, onSpeak }) {
+// ── Tekstballon — zonder vertaalvlaggen ───────────────────────────────────
+function SpeechBubble({ message, onSpeak }) {
   if (!message) return null;
-  const text = message[lang] || message.nl || '';
+  const text = message.nl || '';
   const facts = message.facts || [];
 
   return (
@@ -419,7 +372,7 @@ function SpeechBubble({ message, lang, setLang, onSpeak }) {
         position:'relative',
       }}
     >
-      {/* Pijltje */}
+      {/* Pijltje omhoog naar spiegel */}
       <div style={{ position:'absolute', top:-12, left:'50%', transform:'translateX(-50%)',
         width:0, height:0, borderLeft:'9px solid transparent',
         borderRight:'9px solid transparent', borderBottom:'12px solid rgba(212,160,23,0.52)' }}/>
@@ -427,20 +380,12 @@ function SpeechBubble({ message, lang, setLang, onSpeak }) {
         width:0, height:0, borderLeft:'7px solid transparent',
         borderRight:'7px solid transparent', borderBottom:'10px solid rgba(36,20,6,0.98)' }}/>
 
-      {/* Taalwisselaars + 🔊 */}
-      <div style={{ display:'flex', gap:4, marginBottom:10, flexWrap:'wrap', alignItems:'center' }}>
-        {Object.entries(LANG_LABELS).map(([l,lbl]) => (
-          <button key={l} onClick={() => setLang(l)} style={{
-            padding:'2px 8px', borderRadius:12, fontSize:10, cursor:'pointer',
-            transition:'all 0.2s',
-            background: lang===l ? 'rgba(212,160,23,0.26)' : 'transparent',
-            border:`1px solid ${lang===l ? 'rgba(212,160,23,0.78)' : 'rgba(212,160,23,0.18)'}`,
-            color: lang===l ? '#f5e642' : 'rgba(245,230,66,0.36)',
-          }}>{lbl}</button>
-        ))}
+      {/* 🔊 knop rechtsboven */}
+      <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:8 }}>
         <button onClick={onSpeak} style={{
-          marginLeft:'auto', background:'none', border:'none',
-          cursor:'pointer', fontSize:16, opacity:0.54,
+          background:'none', border:'none',
+          cursor:'pointer', fontSize:18, opacity:0.6,
+          padding:'0 2px',
         }}>🔊</button>
       </div>
 
@@ -462,12 +407,12 @@ function SpeechBubble({ message, lang, setLang, onSpeak }) {
           {facts.map((f,i) => (
             <div key={i} style={{
               background:'rgba(245,230,66,0.04)',
-              border:'1px solid rgba(212,160,23,0.12)',
+              border:'1px solid rgba(212,160,12,0.12)',
               borderRadius:9, padding:'5px 10px',
             }}>
               <span style={{ color:'#d4a017', fontSize:10, fontWeight:700 }}>{f.year} · </span>
               <span style={{ color:'rgba(245,230,66,0.7)', fontSize:11, fontStyle:'italic' }}>
-                {f[lang] || f.nl}
+                {f.nl}
               </span>
             </div>
           ))}
@@ -483,7 +428,6 @@ export default function MagischeSpiegel() {
   const [name, setName]               = useState('');
   const [birthInput, setBirthInput]   = useState('');
   const [message, setMessage]         = useState(null);
-  const [lang, setLang]               = useState('nl');
   const [status, setStatus]           = useState('');
   const [isListening, setIsListening] = useState(false);
   const [listenTarget, setListenTarget] = useState(null);
@@ -491,7 +435,6 @@ export default function MagischeSpiegel() {
   const [isSpeaking, setIsSpeaking]   = useState(false);
   const [daysInfo, setDaysInfo]       = useState(null);
   const [showKeyModal, setShowKeyModal] = useState(false);
-  const [hasError, setHasError]       = useState(false);
   const [apiKey, setApiKey] = useState(() => {
     if (ENV_KEY) return ENV_KEY;
     try { return localStorage.getItem('magic_mirror_key') || ''; } catch { return ''; }
@@ -500,7 +443,6 @@ export default function MagischeSpiegel() {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const recRef = useRef(null);
-  // Bewaar parsed datum voor hergebruik bij opnieuw proberen
   const parsedDateRef = useRef(null);
 
   // Camera
@@ -534,8 +476,6 @@ export default function MagischeSpiegel() {
   // ── Helpers ──────────────────────────────────────────────────────────────
   const parseBirthDate = (input) => {
     const raw = input.trim().toLowerCase();
-
-    // Maandnamen → nummer (NL volledig + afkortingen + EN als bonus)
     const MAANDEN = {
       januari:1, jan:1, january:1,
       februari:2, feb:2, february:2,
@@ -550,31 +490,22 @@ export default function MagischeSpiegel() {
       november:11, nov:11,
       december:12, dec:12,
     };
-
-    // ── Poging 1: maandnaam aanwezig (b.v. "4 april", "april 4", "4e april 2010")
     const maandMatch = raw.match(
       /\b(januari|jan|februari|feb|maart|mrt|mar|april|apr|mei|juni|jun|juli|jul|augustus|aug|september|sept?|oktober|okt|oct|november|nov|december|dec|january|february|march|may|june|july|august|october)\b/
     );
     if (maandMatch) {
       const month = MAANDEN[maandMatch[1]];
-      // Haal alle losse getallen uit de string
       const nums = raw.match(/\d+/g)?.map(Number) || [];
-      // Eerste getal <= 31 is de dag, negeer getallen >= 100 (jaar)
       const day = nums.find(n => n >= 1 && n <= 31);
       if (day && month) return { day, month };
     }
-
-    // ── Poging 2: numeriek formaat "15-04", "15/04", "15.04", "15 04"
     const clean = raw.replace(/[\/\.\s]/g, '-');
     const parts = clean.split('-').map(p => parseInt(p, 10));
     if (parts.length >= 2) {
       const [a, b] = parts;
-      // dag-maand volgorde
       if (a >= 1 && a <= 31 && b >= 1 && b <= 12) return { day:a, month:b };
-      // maand-dag volgorde (EN stijl, als a > 12)
       if (b >= 1 && b <= 31 && a >= 1 && a <= 12) return { day:b, month:a };
     }
-
     return null;
   };
 
@@ -587,14 +518,12 @@ export default function MagischeSpiegel() {
     return diff;
   };
 
-  // ── Stap 1: naam ─────────────────────────────────────────────────────────
   const confirmName = () => {
     if (!name.trim()) { setStatus('Vertel mij eerst hoe je heet! 🌟'); return; }
     setStatus('');
     setStep(STEP.DATE);
   };
 
-  // ── Stap 2: datum → API ──────────────────────────────────────────────────
   const confirmDate = () => {
     const parsed = parseBirthDate(birthInput);
     if (!parsed) { setStatus('Ik begrijp de datum niet. Zeg bijv. 4 april of 15-04 ✨'); return; }
@@ -602,21 +531,10 @@ export default function MagischeSpiegel() {
     parsedDateRef.current = { ...parsed, days };
     setDaysInfo(days);
     setStatus('');
-    setHasError(false);
     setStep(STEP.DONE);
     fetchMessage(name, parsed.day, parsed.month, days);
   };
 
-  // ── Opnieuw proberen ─────────────────────────────────────────────────────
-  const handleRetry = () => {
-    if (!parsedDateRef.current) return;
-    const { day, month, days } = parsedDateRef.current;
-    setHasError(false);
-    setStatus('');
-    fetchMessage(name, day, month, days);
-  };
-
-  // ── Microfoon ────────────────────────────────────────────────────────────
   const startListening = (target) => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { setStatus('Microfoon werkt niet in deze browser 🎤'); return; }
@@ -632,20 +550,18 @@ export default function MagischeSpiegel() {
       if (target === STEP.NAME) {
         setName(heard.replace(/[^a-zA-ZÀ-ÿ\s'-]/g, '').trim());
       } else {
-        // Bewaar de gesproken tekst direct — parseBirthDate herkent maandnamen
         setBirthInput(heard);
       }
     };
     rec.start();
   };
 
-  // ── Magische fallback-boodschappen (als API niet bereikbaar is) ──────────
+  // ── Fallback boodschappen ─────────────────────────────────────────────
   const buildFallback = (n, day, month, daysUntil) => {
     const maanden = ['januari','februari','maart','april','mei','juni',
       'juli','augustus','september','oktober','november','december'];
     const maand = maanden[month - 1];
 
-    // Persoonlijke boodschap afhankelijk van timing
     let begroeting = '';
     if (daysUntil === 0)
       begroeting = `Vandaag is jouw grote dag, ${n}! De hele wereld is blij dat jij er bent! 🎉`;
@@ -658,24 +574,23 @@ export default function MagischeSpiegel() {
 
     const boodschap = `${begroeting} De Magische Spiegel weet zeker dat jij een heel speciaal iemand bent, want op jouw verjaardag schijnt er altijd een beetje extra magie in de lucht. Sluit je ogen en maak een wens — soms komen die echt uit! ✨`;
 
-    // Vaste sprookjesachtige feitjes per seizoen (zodat het altijd klopt)
     const seizoenFeitjes = {
-      winter: [ // dec jan feb
+      winter: [
         { year: 1812, nl: 'Schreven de gebroeders Grimm hun eerste sprookjesboek vol magische verhalen voor kinderen.' },
         { year: 1879, nl: 'Werd voor het eerst elektrisch licht gebruikt — net als een toverstaf die de nacht verlicht!' },
         { year: 1955, nl: 'Opende het eerste Disneyland zijn poorten, een echt sprookjespark vol dromen.' },
       ],
-      lente: [ // mrt apr mei
+      lente: [
         { year: 1902, nl: 'Verscheen het eerste boek over het Land van Oz, met de beroemde Tovenaar.' },
         { year: 1937, nl: 'Was Sneeuwwitje de eerste lange animatiefilm ooit — en ze leefden nog lang en gelukkig!' },
         { year: 1989, nl: 'Zwom de Kleine Zeemeermin voor het eerst op het witte doek — een magische wereld onder water.' },
       ],
-      zomer: [ // jun jul aug
+      zomer: [
         { year: 1865, nl: 'Dook Alice voor het eerst in het konijnenhol en belandde in Wonderland.' },
         { year: 1977, nl: 'Vloog Luke Skywalker voor het eerst door de sterren — een sprookje in de ruimte!' },
         { year: 1997, nl: 'Besteeg Harry Potter voor het eerst zijn bezem en vloog naar Zweinstein.' },
       ],
-      herfst: [ // sep okt nov
+      herfst: [
         { year: 1889, nl: 'Opende de Eiffeltoren zijn deuren — zo hoog als een tovenaars hoed!' },
         { year: 1928, nl: 'Piepte Mickey Mouse voor het eerst, het begin van een magische wereld vol tekenfilms.' },
         { year: 1952, nl: 'Verscheen Pippi Langkous voor het eerst op televisie, de sterkste meisje ter wereld.' },
@@ -686,14 +601,9 @@ export default function MagischeSpiegel() {
       : [3,4,5].includes(month) ? 'lente'
       : [6,7,8].includes(month) ? 'zomer' : 'herfst';
 
-    const feitjes = seizoenFeitjes[seizoen].map(f => ({
-      year: f.year,
-      nl: f.nl, en: f.nl, fr: f.nl, de: f.nl,
-    }));
-
     return {
-      nl: boodschap, en: boodschap, fr: boodschap, de: boodschap,
-      facts: feitjes,
+      nl: boodschap,
+      facts: seizoenFeitjes[seizoen],
       _isFallback: true,
     };
   };
@@ -703,7 +613,6 @@ export default function MagischeSpiegel() {
     if (!apiKey) { setStatus('Geen API sleutel ingesteld 🔑'); return; }
     setIsThinking(true);
     setMessage(null);
-    setHasError(false);
     setStatus('De spiegel denkt na... ✨');
 
     try {
@@ -724,17 +633,14 @@ export default function MagischeSpiegel() {
       const raw = resp.content?.[0]?.text || '{}';
       const data = JSON.parse(raw.replace(/```json|```/g,'').trim());
       setMessage(data);
-      setHasError(false);
       setStatus('');
       if (data.nl) {
         setIsSpeaking(true);
         speakAll(data.nl, data.facts || [], 'nl', () => setIsSpeaking(false));
       }
     } catch (err) {
-      // ── Fallback: spiegel vertelt altijd iets moois ───────────────────
       const fallback = buildFallback(n, day, month, days);
       setMessage(fallback);
-      setHasError(false);
       setStatus('✨ De spiegel spreekt vanuit haar hart...');
       setTimeout(() => setStatus(''), 3500);
       setIsSpeaking(true);
@@ -743,13 +649,11 @@ export default function MagischeSpiegel() {
     setIsThinking(false);
   };
 
-  // ── Reset voor volgend kind ──────────────────────────────────────────────
   const handleReset = () => {
     window.speechSynthesis.cancel();
     setStep(STEP.NAME); setName(''); setBirthInput('');
     setMessage(null); setDaysInfo(null);
     setStatus(''); setIsSpeaking(false);
-    setHasError(false);
     parsedDateRef.current = null;
   };
 
@@ -759,7 +663,6 @@ export default function MagischeSpiegel() {
     setShowKeyModal(false);
   };
 
-  // Banner boven spiegel
   const banner = (() => {
     if (daysInfo === null) return null;
     if (daysInfo === 0)              return { text:'🎂 Vandaag is jouw grote dag!', color:'#f5e642' };
@@ -797,6 +700,26 @@ export default function MagischeSpiegel() {
         <p style={S.subtitle}>Vertel mij wie jij bent...</p>
       </header>
 
+      {/* Tekstballon BOVEN de spiegel */}
+      <AnimatePresence>
+        {message && (
+          <div style={{ width:'100%', maxWidth:430, padding:'0 12px', marginBottom:4, position:'relative', zIndex:5 }}>
+            <SpeechBubble
+              message={message}
+              onSpeak={() => {
+                setIsSpeaking(true);
+                speakAll(
+                  message.nl,
+                  message.facts || [],
+                  'nl',
+                  () => setIsSpeaking(false)
+                );
+              }}
+            />
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Banner */}
       <AnimatePresence>
         {banner && (
@@ -809,14 +732,13 @@ export default function MagischeSpiegel() {
         )}
       </AnimatePresence>
 
-      {/* Spiegel */}
-      <div style={S.mirrorWrap}>
+      {/* Spiegel — marginTop vergroot zodat hij iets lager staat */}
+      <div style={{ ...S.mirrorWrap, marginTop: 10 }}>
         <OrnateFrame W={270} H={330}/>
 
         <div style={S.mirrorGlass}>
           <video ref={videoRef} autoPlay playsInline muted style={S.video}/>
 
-          {/* Glinsterende deeltjes */}
           {isDone && message && (
             <div style={{ position:'absolute', inset:0, pointerEvents:'none', overflow:'hidden',
               borderRadius:'50% 50% 47% 47%', zIndex:3 }}>
@@ -832,7 +754,6 @@ export default function MagischeSpiegel() {
             </div>
           )}
 
-          {/* Setup overlay */}
           <AnimatePresence>
             {step !== STEP.DONE && (
               <SetupOverlay
@@ -846,7 +767,6 @@ export default function MagischeSpiegel() {
             )}
           </AnimatePresence>
 
-          {/* Denkende bollen */}
           {isThinking && (
             <div style={{ position:'absolute', bottom:14, left:'50%',
               transform:'translateX(-50%)', display:'flex', gap:6, zIndex:15 }}>
@@ -860,7 +780,6 @@ export default function MagischeSpiegel() {
             </div>
           )}
 
-          {/* Spreekring */}
           {isSpeaking && (
             <div style={{ position:'absolute', inset:-4, borderRadius:'50% 50% 47% 47%',
               border:'3px solid #f5e642', animation:'speakRing 1s ease-in-out infinite',
@@ -868,7 +787,6 @@ export default function MagischeSpiegel() {
           )}
         </div>
 
-        {/* Naam badge onder spiegel */}
         {isDone && name && (
           <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }} style={S.nameBadge}>
             ✦ {name} ✦
@@ -879,27 +797,7 @@ export default function MagischeSpiegel() {
       {/* Status */}
       {status ? <p style={S.status}>{status}</p> : null}
 
-      {/* Tekstballon */}
-      <AnimatePresence>
-        {message && (
-          <div style={{ width:'100%', maxWidth:430, padding:'0 12px', marginTop:6 }}>
-            <SpeechBubble
-              message={message} lang={lang} setLang={setLang}
-              onSpeak={() => {
-                setIsSpeaking(true);
-                speakAll(
-                  message[lang] || message.nl,
-                  message.facts || [],
-                  LANG_CODE[lang],
-                  () => setIsSpeaking(false)
-                );
-              }}
-            />
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* ── Fallback-indicator: subtiele melding als spiegel uit eigen hart spreekt ── */}
+      {/* Fallback indicator */}
       <AnimatePresence>
         {message?._isFallback && !isThinking && (
           <motion.p
@@ -929,7 +827,7 @@ export default function MagischeSpiegel() {
         </motion.div>
       )}
 
-      {/* API sleutel knop — verborgen als env variabele is ingesteld */}
+      {/* API sleutel knop */}
       {!ENV_KEY && (
         <button onClick={() => setShowKeyModal(true)} style={S.btnKey}>
           <Key size={10} style={{ marginRight:4 }}/>
@@ -1002,10 +900,6 @@ const CSS = `
     0%,100% { box-shadow:0 0 9px rgba(245,230,66,0.2); }
     50%     { box-shadow:0 0 20px rgba(245,230,66,0.56); }
   }
-  @keyframes retryPulse {
-    0%,100% { box-shadow:0 0 10px rgba(255,140,0,0.3); }
-    50%     { box-shadow:0 0 22px rgba(255,140,0,0.7); }
-  }
 `;
 
 // ── Styles ────────────────────────────────────────────────────────────────
@@ -1046,7 +940,7 @@ const S = {
     letterSpacing:'0.14em', fontStyle:'italic',
   },
   banner: {
-    width:'100%', maxWidth:420, margin:'0 12px 8px',
+    width:'100%', maxWidth:420, margin:'0 12px 6px',
     padding:'7px 16px',
     background:'rgba(16,9,0,0.86)',
     border:'1px solid', borderRadius:20,
@@ -1059,6 +953,7 @@ const S = {
     position:'relative', width:270, height:330,
     display:'flex', alignItems:'center', justifyContent:'center',
     zIndex:5, marginBottom:6,
+    // marginTop wordt inline gezet (10px) zodat spiegel iets lager staat
   },
   mirrorGlass: {
     position:'absolute',
@@ -1093,17 +988,6 @@ const S = {
     zIndex:5, textAlign:'center', position:'relative',
     maxWidth:380, lineHeight:1.6,
   },
-  btnRetry: {
-    padding:'11px 28px',
-    background:'linear-gradient(135deg,#7a3800,#c05a00,#ff8c00,#c05a00,#7a3800)',
-    backgroundSize:'200% auto',
-    border:'none', borderRadius:30,
-    color:'#fff8f0', fontWeight:700, cursor:'pointer',
-    fontSize:14, fontFamily:"'IM Fell English', serif",
-    letterSpacing:'0.08em',
-    boxShadow:'0 4px 18px rgba(200,80,0,0.46)',
-    animation:'retryPulse 2s ease-in-out infinite',
-  },
   btnNext: {
     padding:'11px 28px',
     background:'linear-gradient(135deg,#8B6914,#d4a017,#f5e642,#d4a017,#8B6914)',
@@ -1119,7 +1003,7 @@ const S = {
     background:'transparent',
     border:'1px solid rgba(212,160,23,0.13)',
     borderRadius:20, fontSize:10,
-    color:'rgba(212,160,23,0.36)',
+    color:'rgba(212,160,12,0.36)',
     letterSpacing:'0.1em', cursor:'pointer',
     display:'flex', alignItems:'center',
     position:'relative', zIndex:5,
