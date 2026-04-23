@@ -1,6 +1,6 @@
 /**
  * Magische Spiegel — Verjaardagsspiegel voor Kinderen
- * Efteling / Anton Piek stijl  ·  v8
+ * Efteling / Anton Piek stijl  ·  v9
  * Wijzigingen v5:
  *  - OrnateFrame vervangen door rozenkrans: groene rank, rozen in bloei, knoppen en bladeren langs ellips
  * Wijzigingen v4:
@@ -63,7 +63,28 @@ async function speakWithFallback(text, langCode = 'nl', onEnd = () => {}) {
   setTimeout(() => { try { window.speechSynthesis.cancel(); } catch {} }, text.length * 70 + 3000);
 }
 
-// ── Constanten ────────────────────────────────────────────────────────────
+// ── speakAll: spreek boodschap voor, dan elk feitje met jaar ─────────────
+// Keten: boodschap → korte pauze → "En wist je dat..." → feit 1 → feit 2 → feit 3 → onEnd
+async function speakAll(boodschap, facts, langCode = 'nl', onEnd = () => {}) {
+  if (!boodschap) { onEnd(); return; }
+
+  // Bouw de feitjes-tekst als één aaneengesloten verhaal
+  const maanden = ['januari','februari','maart','april','mei','juni',
+    'juli','augustus','september','oktober','november','december'];
+
+  const feitjesTekst = facts.length > 0
+    ? 'En wist je dat er op jouw verjaardag ook bijzondere dingen zijn gebeurd? '
+      + facts.map(f => `In het jaar ${f.year}: ${f[langCode] || f.nl}`).join('. ') + '.'
+    : '';
+
+  const volledigeTekst = feitjesTekst
+    ? `${boodschap} ${feitjesTekst}`
+    : boodschap;
+
+  speakWithFallback(volledigeTekst, langCode, onEnd);
+}
+
+
 const STEP = { NAME: 'name', DATE: 'date', DONE: 'done' };
 const LANG_LABELS = { nl: '🇳🇱 NL', en: '🇬🇧 EN', fr: '🇫🇷 FR', de: '🇩🇪 DE' };
 const LANG_CODE   = { nl: 'nl', en: 'en', fr: 'fr', de: 'de' };
@@ -707,7 +728,7 @@ export default function MagischeSpiegel() {
       setStatus('');
       if (data.nl) {
         setIsSpeaking(true);
-        speakWithFallback(data.nl, 'nl', () => setIsSpeaking(false));
+        speakAll(data.nl, data.facts || [], 'nl', () => setIsSpeaking(false));
       }
     } catch (err) {
       // ── Fallback: spiegel vertelt altijd iets moois ───────────────────
@@ -717,7 +738,7 @@ export default function MagischeSpiegel() {
       setStatus('✨ De spiegel spreekt vanuit haar hart...');
       setTimeout(() => setStatus(''), 3500);
       setIsSpeaking(true);
-      speakWithFallback(fallback.nl, 'nl', () => setIsSpeaking(false));
+      speakAll(fallback.nl, fallback.facts || [], 'nl', () => setIsSpeaking(false));
     }
     setIsThinking(false);
   };
@@ -866,8 +887,12 @@ export default function MagischeSpiegel() {
               message={message} lang={lang} setLang={setLang}
               onSpeak={() => {
                 setIsSpeaking(true);
-                speakWithFallback(message[lang]||message.nl, LANG_CODE[lang],
-                  () => setIsSpeaking(false));
+                speakAll(
+                  message[lang] || message.nl,
+                  message.facts || [],
+                  LANG_CODE[lang],
+                  () => setIsSpeaking(false)
+                );
               }}
             />
           </div>
@@ -1005,12 +1030,12 @@ const S = {
   },
   header: {
     width:'100%', maxWidth:480,
-    padding:'18px 16px 8px',
+    padding:'6px 16px 3px',
     display:'flex', flexDirection:'column', alignItems:'center',
     position:'relative', zIndex:5,
   },
   title: {
-    margin:0, fontSize:22, fontWeight:700,
+    margin:'0 0 2px', fontSize:22, fontWeight:700,
     color:'#f5e642',
     animation:'titleShimmer 3s ease-in-out infinite',
     letterSpacing:'0.05em',
