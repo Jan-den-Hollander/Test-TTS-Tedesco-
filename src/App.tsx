@@ -326,7 +326,7 @@ function SetupOverlay({ step, name, setName, birthInput, setBirthInput,
         zIndex:10, gap:10,
       }}
     >
-      <div style={{ fontSize:26 }}>{isName ? '👋' : '🎂'}</div>
+      <div style={{ fontSize:26 }}>{isName ? '🧚' : '🎂'}</div>
 
       <p style={{
         color:'#f5e642', fontSize:12, textAlign:'center', margin:0,
